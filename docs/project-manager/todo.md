@@ -1,0 +1,6 @@
+- 存储数据结构设计
+  - 房间列表
+  - 游戏局内状态
+- 各种时序操作罗列
+- room.{roomid}.state 还是 room.state.{roomid} 定下来
+- 基于 architrechture.md 细化完整的模块、feature set、roadmap、
