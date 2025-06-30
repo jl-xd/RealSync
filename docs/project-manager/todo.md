@@ -4,3 +4,6 @@
 - 各种时序操作罗列
 - room.{roomid}.state 还是 room.state.{roomid} 定下来
 - 基于 architrechture.md 细化完整的模块、feature set、roadmap、
+- API命名，是分段式好，还是普通的好 
+  - https://claude.ai/chat/7326b3e7-ce49-4e71-82f8-07ed023edd06
+  - https://chatgpt.com/c/685e4362-f28c-800a-9b12-412c5fab7365

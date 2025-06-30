@@ -8,10 +8,98 @@
 
 **RealSync** 是一个为游戏开发者设计的、开箱即用的多人实时状态同步框架。其核心目标是让开发者从复杂的后端网络同步逻辑中解放出来，能够像使用 Firebase/Firestore 一样，通过简洁的客户端SDK，轻松实现玩家数据、游戏状态在多端之间的低延迟同步。
 
-- **目标用户**: 独立游戏开发者、中小型游戏团队、Game Jam参与者、以及需要快速实现联机功能原型的开发者。
 - **解决的问题**: 消除自建和维护游戏同步服务器带来的高昂成本、技术复杂性和时间投入。
 
-### **1.2 核心概念 (Core Concepts)**
+### **1.2 目标用户分析**
+
+#### **用户群体概览**
+
+| 用户群体 | 团队规模 | 主要特征 | 核心痛点 | 关键需求 |
+|---------|---------|---------|---------|---------|
+| **独立游戏开发者** | 1-2人 | 预算紧张，后端经验有限 | 缺乏基础设施经验，担心维护负担 | 即插即用，低成本，详细文档 |
+| **中小游戏团队** | 3-20人 | 多项目并行，注重效率 | 重复造轮子，维护分散精力 | 标准化方案，快速迭代，可预测成本 |
+| **Game Jam参与者** | 临时组队 | 48-72小时极限开发 | 时间极限，技术栈不统一 | 零配置，5分钟上手，多平台支持 |
+| **教育用户** | 课程/训练营 | 学习导向，预算极限 | 学习曲线陡峭，缺乏实战经验 | 教育定价，渐进复杂度，完整示例 |
+
+#### **详细用户群体分析**
+
+##### **1. 独立游戏开发者 (Individual Indie Developers)**
+**特征**:
+- 个人开发者或1-2人小团队
+- 技术栈多样化，但后端经验有限
+- 预算紧张，注重成本效益
+- 时间压力大，需要快速验证游戏创意
+
+**痛点**:
+- 缺乏后端基础设施搭建经验
+- 无力承担专职后端工程师成本
+- 需要快速实现多人游戏功能验证可行性
+- 担心技术债务和维护负担
+
+**期望**:
+- 即插即用的解决方案
+- 低成本或免费的开发阶段使用
+- 详细的文档和示例代码
+- 活跃的社区支持
+
+##### **2. 中小游戏团队 (Small-Medium Game Studios)**
+**特征**:
+- 3-20人团队规模
+- 有基本的技术架构能力
+- 多个项目并行开发
+- 关注开发效率和product-market fit
+
+**痛点**:
+- 每个项目都重复造轮子
+- 后端基础设施维护分散精力
+- 需要支持快速原型开发
+- 缺乏大规模用户的运维经验
+
+**期望**:
+- 标准化的多人游戏解决方案
+- 支持快速迭代和A/B测试
+- 可预测的成本结构
+- 良好的性能和扩展性
+
+##### **3. Game Jam 参与者 (Game Jam Participants)**
+**特征**:
+- 48-72小时极限开发
+- 注重创意和快速实现
+- 通常为临时组队
+- 技术栈和经验参差不齐
+
+**痛点**:
+- 时间极度有限，无法搭建后端
+- 需要快速实现多人交互验证玩法
+- 团队技术栈可能不统一
+- 只需要演示级别的功能
+
+**期望**:
+- 零配置开始使用
+- 5分钟内实现基础多人功能
+- 支持多种客户端平台
+- 免费或低成本使用
+
+##### **4. 教育机构和学生 (Educational Users)**
+**特征**:
+- 游戏开发课程或训练营
+- 学习导向，非商业用途
+- 需要理解底层原理
+- 预算极其有限
+
+**痛点**:
+- 需要学习完整的游戏开发流程
+- 传统方案学习曲线陡峭
+- 需要在有限时间内掌握多人游戏开发
+- 缺乏生产环境经验
+
+**期望**:
+- 教育友好的定价
+- 清晰的架构理解学习材料
+- 渐进式的功能复杂度
+- 完整的示例项目
+
+### **1.3 核心概念 (Core Concepts)**
 
 - **客户端 (Client)**: 运行在玩家设备上的游戏程序，通过 **SDK** 与 RealSync 服务进行交互。
 - **网关服务 (Gateway)**: RealSync 的核心后端服务，负责处理所有客户端连接、消息收发、鉴权、状态存储和逻辑执行。
@@ -132,20 +220,36 @@ package realsync;
 // 客户端发送给服务器的包
 message ClientPacket {
   oneof message {
-    JoinRoomRequest join_room_request = 1;
-    UpdateStateRequest update_state_request = 2;
-    // ... 未来可扩展其他请求, e.g., SendMessageRequest
+    // 房间管理相关
+    GetRoomListRequest get_room_list_request = 1;
+    CreateRoomRequest create_room_request = 2;
+    JoinRoomRequest join_room_request = 3;
+    LeaveRoomRequest leave_room_request = 4;
+    
+    // 游戏状态相关
+    UpdateStateRequest update_state_request = 5;
+    
+    // 未来扩展: 聊天、观战等
+    // SendMessageRequest send_message_request = 6;
   }
 }
 
 // 服务器发送给客户端的包
 message ServerPacket {
   oneof message {
-    JoinRoomResponse join_room_response = 1;
-    StateUpdateBroadcast state_update_broadcast = 2;
-    PlayerJoinedBroadcast player_joined_broadcast = 3;
-    PlayerLeftBroadcast player_left_broadcast = 4;
-    ErrorResponse error_response = 5;
+    // 房间管理响应
+    GetRoomListResponse get_room_list_response = 1;
+    CreateRoomResponse create_room_response = 2;
+    JoinRoomResponse join_room_response = 3;
+    LeaveRoomResponse leave_room_response = 4;
+    
+    // 游戏状态广播
+    StateUpdateBroadcast state_update_broadcast = 5;
+    PlayerJoinedBroadcast player_joined_broadcast = 6;
+    PlayerLeftBroadcast player_left_broadcast = 7;
+    
+    // 通用响应
+    ErrorResponse error_response = 8;
   }
 }
 
@@ -153,59 +257,182 @@ message ServerPacket {
 // 2. 核心数据结构 (Core Data Structures)
 // ===================================================================
 
-// 任意状态值 (用于实现 key-value 状态)
-message StateValue {
+// 通用值类型 (用于各种数据同步场景)
+message Value {
     oneof value {
         string string_value = 1;
         double number_value = 2;
         bool bool_value = 3;
-        // 可以根据需要添加 bytes 等类型
+        ArrayValue array_value = 4;
+        ObjectValue object_value = 5;
     }
 }
 
+// 数组值
+message ArrayValue {
+    repeated Value items = 1;
+}
+
+// 对象值 (Map结构)
+message ObjectValue {
+    map<string, Value> fields = 1;
+}
+
 // 完整的游戏状态 (用于首次加入房间时全量同步)
-map<string, StateValue> GameState = 1;
+map<string, Value> GameState = 1;
 
 // ===================================================================
 // 3. 具体消息定义 (Specific Message Definitions)
 // ===================================================================
 
-// -- 请求 (Requests) --
+// ===================================================================
+// 3.1 房间信息结构 (Room Info Structures)
+// ===================================================================
+
+enum RoomStatus {
+  WAITING = 0;    // 等待玩家加入
+  PLAYING = 1;    // 游戏进行中
+  FINISHED = 2;   // 游戏已结束
+}
+
+enum RoomVisibility {
+  PUBLIC = 0;     // 公开房间，任何人可见可加入
+  PRIVATE = 1;    // 私有房间，需要邀请码
+}
+
+// 房间基本信息（用于列表显示）
+message RoomInfo {
+  string room_id = 1;
+  string name = 2;
+  RoomStatus status = 3;
+  RoomVisibility visibility = 4;
+  int32 player_count = 5;
+  int32 max_players = 6;
+  string game_mode = 7;
+  string owner_id = 8;
+  int64 created_at = 9;      // Unix timestamp
+  int64 last_activity_at = 10; // Unix timestamp
+}
+
+// 分页信息
+message PaginationInfo {
+  int32 page = 1;
+  int32 page_size = 2;
+  int32 total_count = 3;
+  bool has_next_page = 4;
+}
+
+// ===================================================================
+// 3.2 房间管理请求 (Room Management Requests)
+// ===================================================================
+
+message GetRoomListRequest {
+  // 过滤条件
+  optional RoomStatus status_filter = 1;
+  optional RoomVisibility visibility_filter = 2;
+  optional string game_mode_filter = 3;
+  
+  // 分页参数
+  int32 page = 4;           // 页码，从1开始
+  int32 page_size = 5;      // 每页大小，默认20，最大100
+  
+  // 排序选项
+  enum SortBy {
+    CREATED_AT = 0;         // 按创建时间排序
+    LAST_ACTIVITY = 1;      // 按最后活动时间排序
+    PLAYER_COUNT = 2;       // 按玩家数量排序
+  }
+  SortBy sort_by = 6;
+  bool sort_descending = 7; // true为降序，false为升序
+}
+
+message CreateRoomRequest {
+  string name = 1;
+  string game_mode = 2;
+  int32 max_players = 3;
+  RoomVisibility visibility = 4;
+  optional string invite_code = 5; // 私有房间的邀请码
+  map<string, Value> initial_state = 6; // 房间初始状态
+}
 
 message JoinRoomRequest {
   string room_id = 1;
+  optional string invite_code = 2; // 私有房间需要提供邀请码
   // JWT Token 将在 WebSocket 连接的 URL 参数中传递，不在此处
 }
 
-message UpdateStateRequest {
-  map<string, StateValue> state_patches = 1; // 状态的增量更新
+message LeaveRoomRequest {
+  string room_id = 1;
 }
 
-// -- 响应 (Responses) & 广播 (Broadcasts) --
+message UpdateStateRequest {
+  map<string, Value> state_patches = 1; // 状态的增量更新
+}
+
+// ===================================================================
+// 3.3 房间管理响应 (Room Management Responses)
+// ===================================================================
+
+message GetRoomListResponse {
+  bool success = 1;
+  repeated RoomInfo rooms = 2;
+  PaginationInfo pagination = 3;
+}
+
+message CreateRoomResponse {
+  bool success = 1;
+  RoomInfo room_info = 2;    // 成功创建的房间信息
+}
 
 message JoinRoomResponse {
   bool success = 1;
   GameState initial_state = 2; // 成功加入后，返回房间的当前全量状态
   repeated string players_in_room = 3; // 房间内所有玩家的ID
+  RoomInfo room_info = 4;    // 房间基本信息
 }
 
-message ErrorResponse {
-    int32 code = 1;
-    string message = 2;
+message LeaveRoomResponse {
+  bool success = 1;
 }
+
+// ===================================================================
+// 3.4 游戏状态广播 (Game State Broadcasts)
+// ===================================================================
 
 message StateUpdateBroadcast {
   string source_player_id = 1; // 状态更新的发起者
-  map<string, StateValue> state_patches = 2; // 状态的增量更新
+  map<string, Value> state_patches = 2; // 状态的增量更新
 }
 
 message PlayerJoinedBroadcast {
   string player_id = 1;
+  RoomInfo room_info = 2;    // 更新后的房间信息（玩家数量等）
 }
 
 message PlayerLeftBroadcast {
   string player_id = 1;
+  RoomInfo room_info = 2;    // 更新后的房间信息（玩家数量等）
 }
+
+// ===================================================================
+// 3.5 通用响应 (Generic Responses)
+// ===================================================================
+
+message ErrorResponse {
+  int32 code = 1;
+  string message = 2;
+  optional string details = 3; // 错误详情，用于调试
+}
+
+// ===================================================================
+// 3.6 错误码定义 (Error Code Definitions)
+// ===================================================================
+
+// 常见错误码
+// 1000-1099: 认证相关错误
+// 1100-1199: 房间相关错误
+// 1200-1299: 状态同步相关错误
+// 1300-1399: 权限相关错误
 
 ```
 
@@ -218,19 +445,162 @@ message PlayerLeftBroadcast {
 - **连接管理**: 维护海量 WebSocket 长连接，处理心跳和重连。
 - **认证授权**: 通过 JWT 验证客户端身份，并依据安全规则判断操作权限。
 - **消息路由**: 反序列化 Protobuf 消息，根据消息类型调用相应的处理逻辑。
+- **房间管理**: 处理房间的创建、查询、加入、离开等生命周期管理。
 - **状态同步**: 与 Redis 交互，持久化房间状态，并通过 Pub/Sub 广播更新。
+- **索引维护**: 实时维护各种房间索引，确保数据一致性和查询性能。
 - **权威逻辑**: 执行服务器端的权威逻辑，如游戏计时器、胜负判断等。
 
+#### **4.1.1 房间管理流程**
+
+**房间创建流程**:
+1. 验证客户端权限和参数合法性
+2. 生成唯一的 `roomId`
+3. 创建房间核心数据结构 (`room:state`, `room:members`, `room:metadata`)
+4. 创建房间索引信息 (`room:info`)
+5. 更新相关索引 (按状态、可见性、游戏模式分类)
+6. 返回房间信息给客户端
+
+**房间列表查询流程**:
+1. 解析查询参数（过滤条件、分页、排序）
+2. 根据过滤条件选择合适的Redis索引
+3. 批量查询房间基本信息
+4. 应用额外的过滤和排序逻辑
+5. 构建分页响应
+
+**房间状态变更流程**:
+1. 执行状态变更逻辑
+2. 更新房间基本信息 (`room:info`)
+3. 更新相关索引（移动到新的状态分类）
+4. 通过 Pub/Sub 广播变更事件
+5. 通知房间内所有玩家
+
+**数据一致性保障**:
+- 使用 Redis 事务或 Lua 脚本确保多个操作的原子性
+- 定期执行数据修复任务，清理孤立数据
+- 实现优雅降级，在索引不一致时回退到全扫描
+
 ### **4.2 Redis 数据结构**
+
+#### **4.2.1 房间核心数据 (Room Core Data)**
 
 - **房间状态**: `room:state:{roomId}` (HASH)
     - 存储一个房间内所有 Key-Value 状态。Key为状态名，Value为Protobuf `StateValue` 序列化后的二进制数据。
 - **房间成员**: `room:members:{roomId}` (SET)
     - 存储一个房间内所有 `PlayerID`。
 - **房间元数据**: `room:metadata:{roomId}` (HASH)
-    - 存储房间的元信息，如`ownerId`, `creationTime`等。
+    - 存储房间的详细元信息，如`ownerId`, `creationTime`, `maxPlayers`, `gameMode`等。
 - **更新通道**: `room:channel:{roomId}` (Pub/Sub Channel)
     - 用于在服务器多实例之间广播状态更新事件。
+
+#### **4.2.2 房间列表与索引 (Room Listing & Indexing)**
+
+为了支持高效的房间列表查询和过滤，我们需要额外的索引数据结构：
+
+- **房间基本信息**: `room:info:{roomId}` (HASH)
+    - 存储用于列表显示的房间基本信息，避免每次查询都读取完整元数据
+    - 字段: `name`, `status`, `visibility`, `playerCount`, `maxPlayers`, `gameMode`, `ownerId`, `createdAt`, `lastActivityAt`
+
+- **按状态分类的房间列表**: 
+    - `rooms:status:waiting` (ZSET) - 等待中的房间，按创建时间排序 (score = timestamp)
+    - `rooms:status:playing` (ZSET) - 游戏中的房间，按创建时间排序
+    - `rooms:status:finished` (ZSET) - 已结束的房间，按结束时间排序
+
+- **按可见性分类的房间列表**:
+    - `rooms:public:waiting` (ZSET) - 公开且等待中的房间，按创建时间排序
+    - `rooms:public:playing` (ZSET) - 公开且游戏中的房间，按创建时间排序
+    - `rooms:private` (SET) - 私有房间集合
+
+- **全局房间索引**:
+    - `rooms:all` (ZSET) - 所有活跃房间，按最后活动时间排序 (用于清理过期房间)
+    - `rooms:by_owner:{playerId}` (SET) - 特定玩家创建的房间列表
+
+- **游戏模式分类**:
+    - `rooms:gamemode:{gameMode}:waiting` (ZSET) - 特定游戏模式的等待中房间
+    - `rooms:gamemode:{gameMode}:playing` (ZSET) - 特定游戏模式的游戏中房间
+
+#### **4.2.3 房间状态枚举**
+
+```typescript
+enum RoomStatus {
+  WAITING = 'waiting',      // 等待玩家加入
+  PLAYING = 'playing',      // 游戏进行中
+  FINISHED = 'finished'     // 游戏已结束
+}
+
+enum RoomVisibility {
+  PUBLIC = 'public',        // 公开房间，任何人可见可加入
+  PRIVATE = 'private'       // 私有房间，需要邀请码
+}
+```
+
+#### **4.2.4 数据一致性维护**
+
+当房间状态发生变化时，需要同步更新所有相关的索引：
+
+1. **房间创建时**:
+   ```redis
+   # 创建房间基本信息
+   HSET room:info:{roomId} name "My Game" status "waiting" visibility "public" ...
+   
+   # 添加到相应的索引
+   ZADD rooms:status:waiting {timestamp} {roomId}
+   ZADD rooms:public:waiting {timestamp} {roomId}
+   ZADD rooms:all {timestamp} {roomId}
+   SADD rooms:by_owner:{ownerId} {roomId}
+   ```
+
+2. **房间状态变更时** (waiting → playing):
+   ```redis
+   # 更新房间信息
+   HSET room:info:{roomId} status "playing" lastActivityAt {timestamp}
+   
+   # 移动到新的状态索引
+   ZREM rooms:status:waiting {roomId}
+   ZREM rooms:public:waiting {roomId}
+   ZADD rooms:status:playing {timestamp} {roomId}
+   ZADD rooms:public:playing {timestamp} {roomId}
+   
+   # 更新活跃时间
+   ZADD rooms:all {timestamp} {roomId}
+   ```
+
+3. **玩家加入/离开时**:
+   ```redis
+   # 更新玩家数量和活跃时间
+   HINCRBY room:info:{roomId} playerCount 1
+   HSET room:info:{roomId} lastActivityAt {timestamp}
+   ZADD rooms:all {timestamp} {roomId}
+   ```
+
+#### **4.2.5 查询示例**
+
+- **获取公开的等待中房间列表** (支持分页):
+  ```redis
+  # 获取最新的10个等待中的公开房间
+  ZREVRANGE rooms:public:waiting 0 9 WITHSCORES
+  
+  # 批量获取房间信息
+  HMGET room:info:{roomId1} room:info:{roomId2} ... name status playerCount maxPlayers
+  ```
+
+- **按游戏模式过滤**:
+  ```redis
+  # 获取特定游戏模式的等待中房间
+  ZREVRANGE rooms:gamemode:battle:waiting 0 19 WITHSCORES
+  ```
+
+- **搜索玩家创建的房间**:
+  ```redis
+  # 获取玩家创建的所有房间
+  SMEMBERS rooms:by_owner:{playerId}
+  ```
+
+#### **4.2.6 性能优化考虑**
+
+1. **TTL策略**: 为已结束的房间设置过期时间，自动清理
+2. **Pipeline操作**: 批量更新多个索引时使用Redis Pipeline减少网络往返
+3. **Lua脚本**: 对于复杂的原子操作，使用Lua脚本确保一致性
+4. **缓存策略**: 热门房间列表可以设置短TTL的缓存
 
 ### **4.3 安全规则引擎**
 
@@ -264,101 +634,308 @@ message PlayerLeftBroadcast {
 
 SDK 的核心是提供一套简洁、易用、符合目标语言习惯的API。
 
+### **5.0 API 文档概述**
+
+本章节提供 RealSync SDK 的设计概述。完整的 API 参考文档请查看：
+
+📚 **[SDK API 参考文档](sdk-api-reference.md)**
+
+**文档特性:**
+- **TypeScript SDK**: 完整的 API 参考，包含类型定义、方法说明、错误处理和完整示例
+- **C# SDK**: 预览版 API 设计，正在开发中
+- **实用示例**: 游戏大厅、房间管理、状态同步等完整代码示例
+- **错误处理**: 详细的错误码定义和处理最佳实践
+
+**主要功能:**
+- 🏠 **房间管理**: 创建、查询、加入、离开房间
+- 🔄 **状态同步**: 实时状态更新和广播
+- 🔐 **安全控制**: JWT认证和权限管理
+- 📱 **多平台支持**: Web浏览器、Unity、Node.js等
+- 🔧 **开发友好**: 完整的TypeScript类型支持和错误处理
+
 ### **5.1 TypeScript SDK (`sdk-ts`)**
 
-- **API 设计**:
-    
-    ```
-    import { RealSyncClient } from 'realsync-sdk';
-    
-    const client = new RealSyncClient({
-      tokenProvider: async () => 'YOUR_JWT_TOKEN',
-    });
-    
-    const room = await client.joinRoom('room-123');
-    
-    // 监听状态变化
-    room.on('stateChange', (patches, sourcePlayerId) => {
-      console.log(`Player ${sourcePlayerId} updated state:`, patches);
-      // Update local game UI
-    });
-    
-    room.on('playerJoined', (playerId) => { /* ... */ });
-    room.on('playerLeft', (playerId) => { /* ... */ });
-    
-    // 更新自己的状态
-    function onPlayerMove(newPos) {
-      room.updateState({
-        [`position_${client.getPlayerId()}`]: { numberValue: newPos.x }
-      });
+#### **设计理念**
+
+TypeScript SDK 的设计遵循现代 JavaScript 生态系统的最佳实践，提供类型安全、异步优先的 API 体验。
+
+**核心特性:**
+- **类型安全**: 完整的 TypeScript 类型定义，编译时错误检查
+- **现代 API**: Promise/async-await 模式，符合现代 JavaScript 习惯
+- **事件驱动**: 基于 EventEmitter 的实时事件系统
+- **多环境支持**: 浏览器、Node.js、Electron 等多平台兼容
+
+#### **基本用法示例**
+
+```typescript
+import { RealSyncClient, RoomStatus } from 'realsync-sdk';
+
+// 初始化客户端
+const client = new RealSyncClient({
+  serverUrl: 'wss://connect.realsync.io',
+  tokenProvider: async () => await getAuthToken()
+});
+
+// 连接并获取房间列表
+await client.connectAsync();
+const roomList = await client.getRoomList({
+  statusFilter: RoomStatus.WAITING,
+  page: 1,
+  pageSize: 20
+});
+
+// 创建房间 - 简化API，自动类型推断
+const newRoom = await client.createRoom({
+  name: 'Epic Battle',
+  gameMode: 'battle',
+  maxPlayers: 4,
+  visibility: RoomVisibility.PUBLIC,
+  initialState: {
+    countdown: 60,                           // number
+    gamePhase: 'waiting',                    // string
+    allowSpectators: true,                   // boolean
+    playerList: [],                          // array
+    gameConfig: {                            // object
+      mapSize: 'large',
+      difficulty: 'normal',
+      rules: ['no-camping', 'friendly-fire']
     }
-    
-    ```
-    
-- **打包**: 使用 `esbuild` 或 `Rollup` 打包成多种格式 (ESM, CJS, UMD/IIFE) 以适应不同环境。
+  }
+});
+
+// 加入房间并监听状态变化
+const room = await client.joinRoom('room-123');
+room.on('stateChange', (patches, sourcePlayerId) => {
+  // patches 现在是简化格式：{ key: value }
+  console.log('State updated:', patches);
+  
+  if ('playerPositions' in patches) {
+    updatePlayerPositions(patches.playerPositions); // 自动推断为数组
+  }
+  
+  if ('gameConfig' in patches) {
+    updateGameSettings(patches.gameConfig); // 自动推断为对象
+  }
+});
+
+// 分段式API - 直观的状态操作
+await room.state.set(`player_${client.playerId}_position`, { x: 100, y: 200 });
+await room.state.set(`player_${client.playerId}_health`, 85);
+await room.state.set(`player_${client.playerId}_inventory`, ['sword', 'potion', 'shield']);
+await room.state.set('lastAction', `${client.playerId} moved to (100, 200)`);
+
+// 批量操作支持
+await room.state.batch()
+  .set('gamePhase', 'combat')
+  .set('roundTimer', 60)
+  .set(`player_${client.playerId}_ready`, true)
+  .commit();
+
+// 便利的玩家操作API
+await room.player(client.playerId).set('health', 85);
+await room.player(client.playerId).set('position', { x: 100, y: 200 });
+
+// 状态读取
+const playerHealth = room.state.get(`player_${client.playerId}_health`);
+const gamePhase = room.state.get('gamePhase');
+```
+
+#### **网络智能优化策略**
+
+为了平衡分段式API的易用性和网络效率，SDK内部实现了多层次的智能优化：
+
+**1. 自动批量合并**
+```typescript
+// 开发者的代码 - 看起来是多次网络请求
+room.state.set('playerHealth', 85);
+room.state.set('playerPosition', { x: 100, y: 200 });
+room.state.set('gamePhase', 'combat');
+
+// SDK内部 - 自动合并为一次网络请求
+// 在下一个事件循环中发送: { playerHealth: 85, playerPosition: {...}, gamePhase: 'combat' }
+```
+
+**2. 智能合并策略**
+- **时间窗口合并**: 16ms内的多个操作自动合并（约等于一帧时间）
+- **同key覆盖**: 同一key的多次设置只保留最新值
+- **冲突检测**: 检测并解决潜在的状态冲突
+
+**3. 优化触发机制**
+- **requestAnimationFrame**: 浏览器环境中对齐渲染帧
+- **process.nextTick**: Node.js环境中的微任务优化
+- **手动flush**: 提供立即发送的控制选项
+
+**4. 网络层优化**
+- **压缩算法**: 对批量数据进行压缩传输
+- **增量更新**: 只传输变化的部分
+- **连接复用**: WebSocket连接的高效复用
+
+这种设计让开发者享受分段式API的直观体验，同时保证网络传输的高效性。
+
+#### **技术规格**
+
+- **目标版本**: ES2018+, TypeScript 4.0+
+- **打包格式**: ESM, CommonJS, UMD/IIFE
+- **体积优化**: 支持 Tree-shaking，最小化打包体积
+- **兼容性**: 现代浏览器、Node.js 14+
+- **网络优化**: 自动批量合并，智能冲突解决
+
+> 📚 **详细API参考**: [TypeScript SDK API 文档](sdk-api-reference.md#typescript-sdk)
 
 ### **5.2 C# SDK (`sdk-csharp`)**
 
-- **API 设计 (面向 Unity)**:
-    
-    ```
-    using RealSync;
-    using System.Threading.Tasks;
-    
-    public class GameManager : MonoBehaviour
-    {
-        private IRoom room;
-        private IRealSyncClient client;
-    
-        async void Start()
-        {
-            client = new RealSyncClient(new ClientOptions {
-                TokenProvider = () => Task.FromResult("YOUR_JWT_TOKEN")
-            });
-    
-            room = await client.JoinRoomAsync("room-123");
-    
-            room.OnStateChange += (patches, sourcePlayerId) => {
-                Debug.Log($"Player {sourcePlayerId} updated state.");
-                // 在Unity主线程中更新UI
-            };
-    
-            room.OnPlayerJoined += (playerId) => { /* ... */ };
-            room.OnPlayerLeft += (playerId) => { /* ... */ };
-        }
-    
-        public void OnPlayerMove(Vector2 newPos)
-        {
-            var patch = new Dictionary<string, StateValue> {
-                [$"position_{client.PlayerId}"] = new StateValue { NumberValue = newPos.x }
-            };
-            room.UpdateStateAsync(patch);
+#### **设计理念**
+
+C# SDK 专为 Unity 游戏引擎优化，提供与 Unity 开发流程深度集成的多人游戏解决方案。
+
+**核心特性:**
+- **Unity优化**: 针对Unity引擎的特殊需求进行优化
+- **主线程安全**: 自动处理跨线程调用，确保UI更新在主线程执行
+- **Inspector集成**: 重要配置可在Unity Inspector中直接设置
+- **生命周期管理**: 与Unity MonoBehaviour生命周期完美集成
+
+#### **开发状态**
+
+> 🚧 **开发中** - C# SDK 目前处于开发阶段，预计2024年Q1发布
+
+**已完成特性:**
+- ✅ 核心架构设计
+- ✅ Unity主线程调度器
+- ✅ Protobuf集成方案
+- ✅ 基础API设计
+
+**开发中特性:**
+- 🔄 完整的API实现
+- 🔄 Unity Package Manager支持
+- 🔄 示例项目和教程
+- 🔄 性能优化和测试
+
+#### **预览API**
+
+```csharp
+// 基本用法预览 - 分段式API设计
+var client = new RealSyncClient(new ClientOptions {
+    ServerUrl = "wss://connect.realsync.io",
+    TokenProvider = () => Task.FromResult(GetAuthToken())
+});
+
+await client.ConnectAsync();
+
+// 创建房间 - 简化API，支持C#对象
+var newRoom = await client.CreateRoomAsync(new CreateRoomOptions {
+    Name = "Epic Battle",
+    GameMode = "battle", 
+    MaxPlayers = 4,
+    Visibility = RoomVisibility.Public,
+    InitialState = new {
+        countdown = 60,                          // int
+        gamePhase = "waiting",                   // string
+        allowSpectators = true,                  // bool
+        playerList = new string[0],              // array
+        gameConfig = new {                       // object
+            mapSize = "large",
+            difficulty = "normal",
+            rules = new[] { "no-camping", "friendly-fire" }
         }
     }
+});
+
+var room = await client.JoinRoomAsync("room-123");
+
+// Unity友好的事件监听 - 简化的数据格式
+room.OnStateChange += (patches, sourcePlayerId) => {
+    // patches 现在是 Dictionary<string, object>
+    Debug.Log($"State updated by {sourcePlayerId}");
     
-    ```
+    if (patches.ContainsKey("playerPositions")) {
+        var positions = patches["playerPositions"] as object[];  // 数组
+        UpdatePlayerPositions(positions);
+    }
     
-- **集成**: 目标为 .NET Standard 2.1，以最大化兼容性。使用 `protoc` 生成C#代码，配合 WebSocket 客户端库，可以直接集成到 Unity 项目的 `Assets` 文件夹中。
+    if (patches.ContainsKey("gameConfig")) {
+        var config = patches["gameConfig"] as Dictionary<string, object>;  // 对象
+        UpdateGameSettings(config);
+    }
+    
+    // 自动在Unity主线程中执行
+    UnityMainThreadDispatcher.Enqueue(() => {
+        UpdateGameUI(patches);
+    });
+};
+
+// 分段式API - 直观的状态操作（自动批量优化）
+await room.State.SetAsync($"player_{client.PlayerId}_position", new { x = 100, y = 200 });
+await room.State.SetAsync($"player_{client.PlayerId}_health", 85);
+await room.State.SetAsync($"player_{client.PlayerId}_inventory", new[] { "sword", "potion", "shield" });
+await room.State.SetAsync("lastAction", $"{client.PlayerId} moved to (100, 200)");
+
+// 批量操作支持
+await room.State.Batch()
+    .Set("gamePhase", "combat")
+    .Set("roundTimer", 60)
+    .Set($"player_{client.PlayerId}_ready", true)
+    .CommitAsync();
+
+// 便利的玩家操作API
+await room.Player(client.PlayerId).SetAsync("health", 85);
+await room.Player(client.PlayerId).SetAsync("position", new { x = 100, y = 200 });
+
+// 状态读取 - 支持泛型类型转换
+var playerHealth = room.State.Get<int>($"player_{client.PlayerId}_health");
+var gamePhase = room.State.Get<string>("gamePhase");
+var playerPos = room.State.Get<Vector2>($"player_{client.PlayerId}_position");
+```
+
+#### **技术规格**
+
+- **目标框架**: .NET Standard 2.1
+- **Unity版本**: Unity 2020.3 LTS+
+- **集成方式**: Unity Package Manager, 手动Assets文件夹
+- **兼容性**: Windows, macOS, Linux, Mobile, WebGL
+
+> 📚 **API 预览**: [C# SDK API 文档](sdk-api-reference.md#c-sdk)  
+> 📧 **反馈通道**: 如需提前体验或提供反馈，请联系开发团队
 
 ## **6. 开发与部署**
 
-### **6.1 代码生成工作流**
+### **6.1 开发工作流概述**
+
+RealSync 采用现代化的开发和部署流程，确保高质量的代码交付和稳定的服务运行。
+
+**相关文档:**
+- 📚 [SDK API 参考文档](sdk-api-reference.md) - 完整的SDK使用指南
+- 📋 [项目管理文档](../project-manager/todo.md) - 开发进度和任务管理
+
+### **6.2 代码生成工作流**
 
 在 Monorepo 根目录提供一个脚本，一键为所有目标语言生成最新的协议代码。
 
 - `package.json` 中的脚本:
     
-    ```
+    ```json
     "scripts": {
-      "generate": "turbo run generate"
+      "generate": "turbo run generate",
+      "generate:proto": "protoc --ts_out=packages/sdk-ts/src --csharp_out=packages/sdk-csharp/src packages/protocol/*.proto",
+      "dev": "turbo run dev",
+      "build": "turbo run build",
+      "test": "turbo run test"
     }
-    
     ```
     
 - 每个SDK和服务器的 `package.json` 中定义自己的 `generate` 脚本，调用 `protoc`。
 
-### **6.2 部署**
+### **6.3 部署**
 
 - **Gateway**: 使用 Docker 将 Node.js 应用容器化。
 - **部署平台**: 可部署在任何支持容器的云平台上，如 Google Cloud Run, AWS Fargate, Kubernetes 等。配合负载均衡器可以实现水平扩展。
-- **Redis**: 使用云服务商提供的托管 Redis 集群服务，如 Google Memorystore, AWS ElastiCache for Redis。
+- **Redis**: 使用云服务商提供的托管 Redis 集群服务，如阿里云、Google Memorystore, AWS ElastiCache for Redis。
+
+### **6.4 文档维护**
+
+本项目维护了完整的技术文档体系：
+
+- **[架构设计文档](architecture.md)** - 系统整体架构和设计理念
+- **[SDK API 参考](sdk-api-reference.md)** - 完整的客户端SDK使用指南
+- **[项目管理](../project-manager/todo.md)** - 开发进度和任务跟踪
+
+文档更新遵循代码变更同步的原则，确保文档与实现的一致性。
