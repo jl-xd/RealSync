@@ -182,21 +182,52 @@ const result = await client.createRoom({
 
 ---
 
-###### `joinRoom(roomId: string, inviteCode?: string): Promise<Room>`
+###### `joinRoom(roomId: string, inviteCode?: string): Promise<JoinRoomResult>`
 
 加入指定房间。
 
 ```typescript
-const room = await client.joinRoom('room-123');
-// 或者加入私有房间
-const privateRoom = await client.joinRoom('private-room-456', 'invite-code-123');
+const result = await client.joinRoom('room-123');
+console.log('我的PlayerId:', result.playerId);  // 房间内的短ID，如: 1
+console.log('其他玩家:', result.otherPlayers); // 不包含OpenID的玩家信息
+
+// 私有房间
+const privateResult = await client.joinRoom('private-room-456', 'invite-code-123');
 ```
 
 **参数:**
 - `roomId: string` - 房间ID
 - `inviteCode?: string` - 私有房间的邀请码（可选）
 
-**返回值:** `Promise<Room>`
+**返回值:** `Promise<JoinRoomResult>`
+
+**示例响应:**
+```typescript
+{
+  playerId: 1,                    // 分配给当前玩家的房间内短ID
+  room: Room,                     // 房间实例
+  otherPlayers: [                 // 房间内其他玩家（隐私保护）
+    {
+      playerId: 2,
+      nickname: "Player2",
+      joinedAt: 1640995210000,
+      isOnline: true
+    },
+    {
+      playerId: 3,
+      nickname: "Player3", 
+      joinedAt: 1640995220000,
+      isOnline: true
+    }
+  ],
+  roomState: {                    // 当前房间状态
+    countdown: 60,
+    gamePhase: 'waiting',
+    player_1_ready: true,
+    player_2_ready: false
+  }
+}
+```
 
 **抛出异常:**
 - `RoomNotFoundError` - 房间不存在
@@ -207,13 +238,21 @@ const privateRoom = await client.joinRoom('private-room-456', 'invite-code-123')
 
 ##### 属性
 
-###### `playerId: string | null` (只读)
+###### `currentPlayerId: number | null` (只读)
 
-当前玩家的ID，未连接时为null。
+当前玩家在房间内的短ID，未加入房间时为null。
 
 ```typescript
-const playerId = client.playerId;
+const playerId = client.currentPlayerId;  // 例如: 1, 2, 3
+if (playerId !== null) {
+  console.log(`我是房间内的玩家${playerId}`);
+}
 ```
+
+**注意:** 
+- 这是房间内的临时数字ID，不是全局用户标识
+- 仅在房间内有效，离开房间后失效  
+- 不同房间会分配不同的PlayerId
 
 ###### `isConnected: boolean` (只读)
 
@@ -299,8 +338,9 @@ await room.state.set('gameConfig', {                          // 嵌套对象
   teamSettings: { maxSize: 4, autoBalance: true }
 });
 
-// 动态key支持
-await room.state.set(`player_${playerId}_health`, 85);
+// 动态key支持 (使用房间内的playerId)
+const myPlayerId = client.currentPlayerId; // 例如: 1
+await room.state.set(`player_${myPlayerId}_health`, 85); // "player_1_health"
 ```
 
 **参数:**
@@ -378,27 +418,35 @@ await room.state.flush(); // 立即发送，不等待批量优化
 
 ---
 
-###### `player(playerId: string): PlayerStateManager`
+###### `player(playerId: number): PlayerStateManager`
 
 获取特定玩家的状态管理器，提供便利的玩家相关操作。
 
 ```typescript
-// 玩家状态操作
-await room.player(playerId).set('health', 85);
-await room.player(playerId).set('position', { x: 100, y: 200 });
-await room.player(playerId).update({
+// 操作自己的状态
+const myPlayerId = client.currentPlayerId; // 例如: 1
+await room.player(myPlayerId).set('health', 85);
+await room.player(myPlayerId).set('position', { x: 100, y: 200 });
+await room.player(myPlayerId).update({
   health: 85,
   weapon: 'sword',
   level: 10
 });
 
-// 玩家状态读取
-const playerHealth = room.player(playerId).get('health');
-const allPlayerData = room.player(playerId).getAll();
+// 读取其他玩家状态
+const player2Health = room.player(2).get('health');
+const player3Position = room.player(3).get('position');
+
+// 批量操作
+await room.player(myPlayerId).batch()
+  .set('health', 100)
+  .set('mana', 50)
+  .set('ready', true)
+  .commit();
 ```
 
 **参数:**
-- `playerId: string` - 玩家ID
+- `playerId: number` - 房间内的玩家ID（1, 2, 3...）
 
 **返回值:** `PlayerStateManager` - 玩家状态管理器
 
@@ -477,12 +525,23 @@ const playerState = room.getPlayerState('player-123');
 
 房间基本信息。
 
-###### `playersInRoom: string[]` (只读)
+###### `playersInRoom: PlayerInfo[]` (只读)
 
-房间内所有玩家ID列表。
+房间内所有玩家的信息列表（不包含敏感的OpenID）。
 
 ```typescript
-console.log(`Room has ${room.playersInRoom.length} players`);
+console.log(`房间内有 ${room.playersInRoom.length} 位玩家`);
+
+// 遍历所有玩家
+room.playersInRoom.forEach(player => {
+  console.log(`玩家${player.playerId}: ${player.nickname}, 在线: ${player.isOnline}`);
+});
+
+// 获取特定玩家信息
+const targetPlayer = room.playersInRoom.find(p => p.playerId === 2);
+if (targetPlayer) {
+  console.log(`玩家2的昵称: ${targetPlayer.nickname}`);
+}
 ```
 
 ##### 事件
@@ -492,12 +551,12 @@ console.log(`Room has ${room.playersInRoom.length} players`);
 房间状态发生变化时触发。
 
 ```typescript
-room.on('stateChange', (patches: StatePatches, sourcePlayerId: string) => {
-  console.log(`Player ${sourcePlayerId} updated:`, patches);
+room.on('stateChange', (patches: StatePatches, sourcePlayerId: number) => {
+  console.log(`玩家${sourcePlayerId}更新了状态:`, patches);
   
   // 处理特定状态更新
   if (patches['countdown']) {
-    updateCountdownUI(patches['countdown'].numberValue);
+    updateCountdownUI(patches['countdown']);
   }
 });
 ```
@@ -641,6 +700,49 @@ interface GetRoomListResult {
 interface CreateRoomResult {
   /** 创建的房间信息 */
   roomInfo: RoomInfo;
+}
+```
+
+#### `JoinRoomResult`
+
+加入房间结果。
+
+```typescript
+interface JoinRoomResult {
+  /** 分配给当前玩家的房间内短ID */
+  playerId: number;
+  
+  /** 房间实例 */
+  room: Room;
+  
+  /** 房间内其他玩家信息（不包含OpenID） */
+  otherPlayers: PlayerInfo[];
+  
+  /** 当前房间状态 */
+  roomState: GameState;
+}
+```
+
+#### `PlayerInfo`
+
+房间内玩家信息（隐私保护版本）。
+
+```typescript
+interface PlayerInfo {
+  /** 房间内的短ID */
+  playerId: number;
+  
+  /** 显示名称（可选） */
+  nickname?: string;
+  
+  /** 头像URL（可选） */
+  avatar?: string;
+  
+  /** 加入时间（Unix时间戳） */
+  joinedAt: number;
+  
+  /** 在线状态 */
+  isOnline: boolean;
 }
 ```
 
@@ -1036,7 +1138,12 @@ class GameLobby {
 
   async joinRoom(roomId: string) {
     try {
-      this.currentRoom = await this.client.joinRoom(roomId);
+      const result = await this.client.joinRoom(roomId);
+      this.currentRoom = result.room;
+      
+      console.log(`我的PlayerId: ${result.playerId}`);
+      console.log(`房间内其他玩家:`, result.otherPlayers);
+      
       this.setupRoomEventListeners();
       this.switchToGameView();
     } catch (error) {
@@ -1051,8 +1158,8 @@ class GameLobby {
       this.handleStateUpdate(patches, sourcePlayerId);
     });
 
-    this.currentRoom.on('playerJoined', (playerId, roomInfo) => {
-      this.addPlayerToUI(playerId);
+    this.currentRoom.on('playerJoined', (playerInfo, roomInfo) => {
+      this.addPlayerToUI(playerInfo);
       this.updatePlayerCount(roomInfo.playerCount, roomInfo.maxPlayers);
     });
 
@@ -1062,7 +1169,7 @@ class GameLobby {
     });
   }
 
-  private handleStateUpdate(patches: StatePatches, sourcePlayerId: string) {
+  private handleStateUpdate(patches: StatePatches, sourcePlayerId: number) {
     Object.entries(patches).forEach(([key, value]) => {
       switch (key) {
         case 'countdown':
@@ -1072,8 +1179,9 @@ class GameLobby {
           this.updateGamePhase(value as string);
           break;
         default:
-          if (key.startsWith('position_')) {
-            const playerId = key.substring('position_'.length);
+          if (key.startsWith('player_') && key.includes('_position')) {
+            // 例如: "player_1_position" -> playerId = 1
+            const playerId = parseInt(key.split('_')[1]);
             const position = value as { x: number; y: number };
             this.updatePlayerPosition(playerId, position);
           }
@@ -1085,12 +1193,12 @@ class GameLobby {
   private displayRooms(rooms: RoomInfo[]) { /* 实现UI更新 */ }
   private updatePagination(pagination: PaginationInfo) { /* 实现分页UI */ }
   private switchToGameView() { /* 切换到游戏界面 */ }
-  private addPlayerToUI(playerId: string) { /* 添加玩家到UI */ }
-  private removePlayerFromUI(playerId: string) { /* 从UI移除玩家 */ }
+  private addPlayerToUI(playerInfo: PlayerInfo) { /* 添加玩家到UI */ }
+  private removePlayerFromUI(playerId: number) { /* 从UI移除玩家 */ }
   private updatePlayerCount(current: number, max: number) { /* 更新玩家数显示 */ }
   private updateCountdown(seconds: number) { /* 更新倒计时显示 */ }
   private updateGamePhase(phase: string) { /* 更新游戏阶段 */ }
-  private updatePlayerPosition(playerId: string, position: any) { /* 更新玩家位置 */ }
+  private updatePlayerPosition(playerId: number, position: any) { /* 更新玩家位置 */ }
   private handleError(error: ErrorResponse) { /* 处理错误 */ }
   private async getAuthToken(): Promise<string> { /* 获取认证Token */ return 'token'; }
 }
@@ -1101,9 +1209,9 @@ class GameLobby {
 ```typescript
 class GameSession {
   private room: Room;
-  private playerId: string;
+  private playerId: number;
 
-  constructor(room: Room, playerId: string) {
+  constructor(room: Room, playerId: number) {
     this.room = room;
     this.playerId = playerId;
     this.setupGameLogic();
@@ -1126,7 +1234,7 @@ class GameSession {
 
   // 玩家移动 - 使用分段式API
   async movePlayer(x: number, y: number) {
-    await this.room.state.set(`position_${this.playerId}`, {
+    await this.room.state.set(`player_${this.playerId}_position`, {
       x, y, timestamp: Date.now()
     });
   }
@@ -1153,9 +1261,9 @@ class GameSession {
     this.render();
   }
 
-  private handleRemotePlayerUpdate(patches: StatePatches, sourcePlayerId: string) {
+  private handleRemotePlayerUpdate(patches: StatePatches, sourcePlayerId: number) {
     Object.entries(patches).forEach(([key, value]) => {
-      if (key.startsWith('position_')) {
+      if (key.startsWith('player_') && key.includes('_position')) {
         const position = value as { x: number; y: number; timestamp: number };
         this.updateRemotePlayerPosition(sourcePlayerId, position);
       } else if (key.startsWith('bullet_')) {
@@ -1170,7 +1278,7 @@ class GameSession {
   private updateBullets() { /* 子弹更新 */ }
   private checkCollisions() { /* 碰撞检测 */ }
   private render() { /* 渲染游戏画面 */ }
-  private updateRemotePlayerPosition(playerId: string, position: any) { /* 更新远程玩家位置 */ }
+  private updateRemotePlayerPosition(playerId: number, position: any) { /* 更新远程玩家位置 */ }
   private spawnBullet(bullet: any) { /* 生成子弹 */ }
 }
 ```

@@ -82,47 +82,98 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 ```redis
 # 数据结构: HASH
 # Key: room:state:{roomId}
-# 用途: 存储房间内的所有游戏状态
+# 用途: 存储房间内的所有游戏状态 (使用短playerId)
 
 HSET room:state:room123 
-  "player_alice_position" '{"x":100,"y":200,"timestamp":1640995200000}'
-  "player_bob_health" "85"
+  "player_1_position" '{"x":100,"y":200,"timestamp":1640995200000}'
+  "player_2_health" "85"
+  "player_3_score" "250"
   "game_phase" "combat"
   "round_timer" "60"
   "score_red_team" "150"
   "score_blue_team" "120"
+  "leaderboard" '[{"playerId":1,"score":250},{"playerId":2,"score":180},{"playerId":3,"score":120}]'
+```
+
+**玩家状态命名规范:**
+```redis
+# 玩家相关状态使用 player_{playerId}_{属性} 格式
+"player_1_position"     # 玩家1的位置
+"player_1_health"       # 玩家1的血量
+"player_1_inventory"    # 玩家1的道具
+"player_2_position"     # 玩家2的位置
+"player_2_health"       # 玩家2的血量
 ```
 
 **设计要点:**
-- 使用HASH存储，支持单字段原子更新
-- Key为状态名，Value为JSON序列化的状态值
-- 支持任意数据类型: 字符串、数字、对象、数组
-- 每个字段独立更新，减少冲突
+- **使用短ID**: 状态键使用playerId而非openid，节省存储空间
+- **隐私保护**: 状态数据不包含任何敏感的用户信息
+- **独立更新**: 每个字段支持原子更新，减少并发冲突
+- **类型支持**: 支持数字、字符串、JSON对象、数组等任意数据类型
+- **开发友好**: 使用简单的数字ID，便于开发者处理和调试
 
-#### 2. 房间成员 (Room Members)
+#### 2. 房间成员与玩家映射 (Room Members & Player Mapping)
 
 ```redis
+# 房间成员列表 (使用短playerId)
 # 数据结构: SET
 # Key: room:members:{roomId}
-# 用途: 存储房间内所有玩家ID
+SADD room:members:room123 1 2 3
 
-SADD room:members:room123 "alice" "bob" "charlie"
+# 玩家ID计数器
+# 数据结构: STRING
+# Key: room:player_counter:{roomId}
+SET room:player_counter:room123 3
 
-# 检查玩家是否在房间
-SISMEMBER room:members:room123 "alice"  # 返回: 1
+# OpenID到PlayerId的映射
+# 数据结构: HASH
+# Key: room:openid_mapping:{roomId}
+HSET room:openid_mapping:room123
+  "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4" "1"
+  "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5" "2"
+  "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6" "3"
 
-# 获取房间所有玩家
-SMEMBERS room:members:room123  # 返回: ["alice", "bob", "charlie"]
+# PlayerId到OpenID的反向映射
+# 数据结构: HASH  
+# Key: room:player_mapping:{roomId}
+HSET room:player_mapping:room123
+  "1" "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
+  "2" "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5"
+  "3" "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6"
+
+# 玩家加入时间 (使用短playerId)
+# 数据结构: HASH
+# Key: room:join_time:{roomId}
+HSET room:join_time:room123
+  "1" "1640995200"
+  "2" "1640995210" 
+  "3" "1640995220"
+```
+
+**操作示例:**
+```redis
+# 检查PlayerId是否在房间
+SISMEMBER room:members:room123 1  # 返回: 1
+
+# 获取房间所有PlayerId
+SMEMBERS room:members:room123  # 返回: ["1", "2", "3"]
 
 # 获取房间玩家数量
 SCARD room:members:room123  # 返回: 3
+
+# 通过OpenID获取PlayerId
+HGET room:openid_mapping:room123 "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"  # 返回: "1"
+
+# 通过PlayerId获取OpenID (内部验证使用)
+HGET room:player_mapping:room123 "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
 ```
 
 **设计要点:**
-- SET结构天然去重，避免重复加入
-- 支持高效的成员检查操作
-- 便于统计房间人数
-- 支持集合运算（交集、并集、差集）
+- **存储优化**: 使用4字节数字ID替代58字节字符串，节省93%存储空间
+- **隐私保护**: 开发者API只暴露PlayerId，无法获取OpenID
+- **双向映射**: 支持PlayerId↔OpenID的快速转换
+- **临时性**: PlayerId仅在房间内有效，离开后失效
+- **原子分配**: 使用Redis INCR确保PlayerId唯一性
 
 #### 3. 房间元数据 (Room Metadata)
 
@@ -155,16 +206,40 @@ HSET room:metadata:room123
 ```redis
 # 数据结构: Pub/Sub Channel
 # Key: room:channel:{roomId}  
-# 用途: 房间内实时消息广播
+# 用途: 房间内实时消息广播 (使用短playerId)
 
 # 发布状态更新 (服务器操作)
 PUBLISH room:channel:room123 '{
   "type": "state_update",
-  "source_player": "alice", 
+  "source_player_id": 1, 
   "patches": {
-    "player_alice_position": {"x": 120, "y": 250}
+    "player_1_position": {"x": 120, "y": 250}
   },
   "timestamp": 1640995300
+}'
+
+# 发布玩家加入消息
+PUBLISH room:channel:room123 '{
+  "type": "player_joined",
+  "player_info": {
+    "playerId": 4,
+    "nickname": "NewPlayer",
+    "joined_at": 1640995400
+  },
+  "room_info": {
+    "player_count": 4,
+    "status": "waiting"
+  }
+}'
+
+# 发布玩家离开消息
+PUBLISH room:channel:room123 '{
+  "type": "player_left", 
+  "player_id": 2,
+  "room_info": {
+    "player_count": 3,
+    "status": "waiting"
+  }
 }'
 
 # 订阅房间消息 (网关服务器操作)
@@ -172,10 +247,11 @@ SUBSCRIBE room:channel:room123
 ```
 
 **设计要点:**
-- 利用Redis Pub/Sub实现实时广播
-- 支持多网关实例的消息同步
-- 消息格式统一，包含时间戳和来源信息
-- 自动断线重连机制
+- **隐私保护**: 消息中使用playerId，不暴露openid
+- **轻量消息**: 使用4字节数字ID，减少消息大小
+- **实时广播**: 利用Redis Pub/Sub实现毫秒级消息分发
+- **多实例同步**: 支持多网关服务器实例间的消息同步
+- **消息结构化**: 统一消息格式，包含类型、来源、时间戳等元信息
 
 ---
 
@@ -355,10 +431,10 @@ EXEC
 对于复杂的多步操作，使用Lua脚本确保原子性：
 
 ```lua
--- 玩家加入房间的原子操作
+-- 玩家加入房间的原子操作 (支持playerId分配)
 local join_room_script = [[
   local room_id = ARGV[1]
-  local player_id = ARGV[2]
+  local openid = ARGV[2]
   local max_players = tonumber(ARGV[3])
   
   -- 检查房间是否存在
@@ -367,28 +443,69 @@ local join_room_script = [[
     return {err = 'ROOM_NOT_FOUND'}
   end
   
+  -- 检查玩家是否已在房间中
+  local existing_player_id = redis.call('HGET', 'room:openid_mapping:' .. room_id, openid)
+  if existing_player_id then
+    return {ok = 'ALREADY_IN_ROOM', player_id = tonumber(existing_player_id)}
+  end
+  
   -- 检查房间是否已满
   local current_count = redis.call('SCARD', 'room:members:' .. room_id)
   if current_count >= max_players then
     return {err = 'ROOM_FULL'}
   end
   
-  -- 检查玩家是否已在房间中
-  local already_member = redis.call('SISMEMBER', 'room:members:' .. room_id, player_id)
-  if already_member == 1 then
-    return {err = 'ALREADY_IN_ROOM'}
-  end
+  -- 分配新的playerId
+  local player_id = redis.call('INCR', 'room:player_counter:' .. room_id)
   
-  -- 执行加入操作
+  -- 建立双向映射
+  redis.call('HSET', 'room:openid_mapping:' .. room_id, openid, player_id)
+  redis.call('HSET', 'room:player_mapping:' .. room_id, player_id, openid)
+  
+  -- 添加到成员列表
   redis.call('SADD', 'room:members:' .. room_id, player_id)
+  
+  -- 记录加入时间
+  local timestamp = redis.call('TIME')[1]
+  redis.call('HSET', 'room:join_time:' .. room_id, player_id, timestamp)
   
   -- 更新房间信息
   local new_count = current_count + 1
   redis.call('HSET', 'room:info:' .. room_id, 'player_count', new_count)
   redis.call('HSET', 'room:metadata:' .. room_id, 'player_count', new_count)
+  redis.call('HSET', 'room:info:' .. room_id, 'last_activity_at', timestamp)
+  redis.call('ZADD', 'rooms:all', timestamp, room_id)
   
-  -- 更新活跃时间
+  return {ok = 'SUCCESS', player_id = player_id, player_count = new_count}
+]]
+
+-- 玩家离开房间的原子操作
+local leave_room_script = [[
+  local room_id = ARGV[1]
+  local player_id = tonumber(ARGV[2])
+  
+  -- 检查玩家是否在房间中
+  local is_member = redis.call('SISMEMBER', 'room:members:' .. room_id, player_id)
+  if is_member == 0 then
+    return {err = 'PLAYER_NOT_IN_ROOM'}
+  end
+  
+  -- 获取OpenID用于清理映射
+  local openid = redis.call('HGET', 'room:player_mapping:' .. room_id, player_id)
+  
+  -- 清理映射关系
+  redis.call('HDEL', 'room:openid_mapping:' .. room_id, openid)
+  redis.call('HDEL', 'room:player_mapping:' .. room_id, player_id)
+  redis.call('SREM', 'room:members:' .. room_id, player_id)
+  
+  -- 记录离开时间
   local timestamp = redis.call('TIME')[1]
+  redis.call('HSET', 'room:leave_time:' .. room_id, player_id, timestamp)
+  
+  -- 更新房间信息
+  local new_count = redis.call('SCARD', 'room:members:' .. room_id)
+  redis.call('HSET', 'room:info:' .. room_id, 'player_count', new_count)
+  redis.call('HSET', 'room:metadata:' .. room_id, 'player_count', new_count)
   redis.call('HSET', 'room:info:' .. room_id, 'last_activity_at', timestamp)
   redis.call('ZADD', 'rooms:all', timestamp, room_id)
   
