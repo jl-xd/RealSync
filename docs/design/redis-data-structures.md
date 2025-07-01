@@ -214,19 +214,19 @@ HSET room:join_time:{room123}
 **操作示例:**
 ```redis
 # 检查PlayerId是否在房间
-SISMEMBER room:members:room123 1  # 返回: 1
+SISMEMBER room:members:{room123} 1  # 返回: 1
 
 # 获取房间所有PlayerId
-SMEMBERS room:members:room123  # 返回: ["1", "2", "3"]
+SMEMBERS room:members:{room123}  # 返回: ["1", "2", "3"]
 
 # 获取房间玩家数量
-SCARD room:members:room123  # 返回: 3
+SCARD room:members:{room123}  # 返回: 3
 
 # 通过OpenID获取PlayerId
-HGET room:openid_mapping:room123 "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"  # 返回: "1"
+HGET room:openid_mapping:{room123} "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"  # 返回: "1"
 
 # 通过PlayerId获取OpenID (内部验证使用)
-HGET room:player_mapping:room123 "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
+HGET room:player_mapping:{room123} "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
 ```
 
 **设计要点:**
@@ -270,7 +270,7 @@ HSET room:metadata:{room123}
 # 用途: 房间内实时消息广播 (使用短playerId)
 
 # 发布状态更新 (服务器操作)
-PUBLISH room:channel:room123 '{
+PUBLISH room:channel:{room123} '{
   "type": "state_update",
   "source_player_id": 1, 
   "patches": {
@@ -280,7 +280,7 @@ PUBLISH room:channel:room123 '{
 }'
 
 # 发布玩家加入消息
-PUBLISH room:channel:room123 '{
+PUBLISH room:channel:{room123} '{
   "type": "player_joined",
   "player_info": {
     "playerId": 4,
@@ -294,7 +294,7 @@ PUBLISH room:channel:room123 '{
 }'
 
 # 发布玩家离开消息
-PUBLISH room:channel:room123 '{
+PUBLISH room:channel:{room123} '{
   "type": "player_left", 
   "player_id": 2,
   "room_info": {
@@ -304,7 +304,7 @@ PUBLISH room:channel:room123 '{
 }'
 
 # 订阅房间消息 (网关服务器操作)
-SUBSCRIBE room:channel:room123
+SUBSCRIBE room:channel:{room123}
 ```
 
 **设计要点:**
@@ -327,7 +327,7 @@ SUBSCRIBE room:channel:room123
 # Key: room:info:{roomId}
 # 用途: 房间列表查询的快速索引
 
-HSET room:info:room123
+HSET room:info:{room123}
   "name" "Epic Battle Arena"
   "status" "waiting"
   "visibility" "public"
@@ -449,7 +449,7 @@ local script = [[
   -- 批量获取房间信息
   local room_infos = {}
   for i, room_id in ipairs(room_ids) do
-    local info_key = "room:info:" .. room_id
+    local info_key = "room:info:{" .. room_id .. "}"
     local room_info = redis.call('HGETALL', info_key)
     table.insert(room_infos, room_info)
   end
@@ -473,8 +473,8 @@ EVAL script 0 "waiting" "battle" "1" "10"
 # 房间状态变更的原子操作
 MULTI
   # 更新房间状态
-  HSET room:metadata:room123 "status" "playing"
-  HSET room:info:room123 "status" "playing"
+  HSET room:metadata:{room123} "status" "playing"
+  HSET room:info:{room123} "status" "playing"
   
   # 更新索引
   ZREM rooms:status:waiting "room123"
@@ -499,42 +499,42 @@ local join_room_script = [[
   local max_players = tonumber(ARGV[3])
   
   -- 检查房间是否存在
-  local room_exists = redis.call('EXISTS', 'room:metadata:' .. room_id)
+  local room_exists = redis.call('EXISTS', 'room:metadata:{' .. room_id .. '}')
   if room_exists == 0 then
     return {err = 'ROOM_NOT_FOUND'}
   end
   
   -- 检查玩家是否已在房间中
-  local existing_player_id = redis.call('HGET', 'room:openid_mapping:' .. room_id, openid)
+  local existing_player_id = redis.call('HGET', 'room:openid_mapping:{' .. room_id .. '}', openid)
   if existing_player_id then
     return {ok = 'ALREADY_IN_ROOM', player_id = tonumber(existing_player_id)}
   end
   
   -- 检查房间是否已满
-  local current_count = redis.call('SCARD', 'room:members:' .. room_id)
+  local current_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
   if current_count >= max_players then
     return {err = 'ROOM_FULL'}
   end
   
   -- 分配新的playerId
-  local player_id = redis.call('INCR', 'room:player_counter:' .. room_id)
+  local player_id = redis.call('INCR', 'room:player_counter:{' .. room_id .. '}')
   
   -- 建立双向映射
-  redis.call('HSET', 'room:openid_mapping:' .. room_id, openid, player_id)
-  redis.call('HSET', 'room:player_mapping:' .. room_id, player_id, openid)
+  redis.call('HSET', 'room:openid_mapping:{' .. room_id .. '}', openid, player_id)
+  redis.call('HSET', 'room:player_mapping:{' .. room_id .. '}', player_id, openid)
   
   -- 添加到成员列表
-  redis.call('SADD', 'room:members:' .. room_id, player_id)
+  redis.call('SADD', 'room:members:{' .. room_id .. '}', player_id)
   
   -- 记录加入时间
   local timestamp = redis.call('TIME')[1]
-  redis.call('HSET', 'room:join_time:' .. room_id, player_id, timestamp)
+  redis.call('HSET', 'room:join_time:{' .. room_id .. '}', player_id, timestamp)
   
   -- 更新房间信息
   local new_count = current_count + 1
-  redis.call('HSET', 'room:info:' .. room_id, 'player_count', new_count)
-  redis.call('HSET', 'room:metadata:' .. room_id, 'player_count', new_count)
-  redis.call('HSET', 'room:info:' .. room_id, 'last_activity_at', timestamp)
+  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', new_count)
+  redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', new_count)
+  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'last_activity_at', timestamp)
   redis.call('ZADD', 'rooms:all', timestamp, room_id)
   
   return {ok = 'SUCCESS', player_id = player_id, player_count = new_count}
@@ -546,28 +546,28 @@ local leave_room_script = [[
   local player_id = tonumber(ARGV[2])
   
   -- 检查玩家是否在房间中
-  local is_member = redis.call('SISMEMBER', 'room:members:' .. room_id, player_id)
+  local is_member = redis.call('SISMEMBER', 'room:members:{' .. room_id .. '}', player_id)
   if is_member == 0 then
     return {err = 'PLAYER_NOT_IN_ROOM'}
   end
   
   -- 获取OpenID用于清理映射
-  local openid = redis.call('HGET', 'room:player_mapping:' .. room_id, player_id)
+  local openid = redis.call('HGET', 'room:player_mapping:{' .. room_id .. '}', player_id)
   
   -- 清理映射关系
-  redis.call('HDEL', 'room:openid_mapping:' .. room_id, openid)
-  redis.call('HDEL', 'room:player_mapping:' .. room_id, player_id)
-  redis.call('SREM', 'room:members:' .. room_id, player_id)
+  redis.call('HDEL', 'room:openid_mapping:{' .. room_id .. '}', openid)
+  redis.call('HDEL', 'room:player_mapping:{' .. room_id .. '}', player_id)
+  redis.call('SREM', 'room:members:{' .. room_id .. '}', player_id)
   
   -- 记录离开时间
   local timestamp = redis.call('TIME')[1]
-  redis.call('HSET', 'room:leave_time:' .. room_id, player_id, timestamp)
+  redis.call('HSET', 'room:leave_time:{' .. room_id .. '}', player_id, timestamp)
   
   -- 更新房间信息
-  local new_count = redis.call('SCARD', 'room:members:' .. room_id)
-  redis.call('HSET', 'room:info:' .. room_id, 'player_count', new_count)
-  redis.call('HSET', 'room:metadata:' .. room_id, 'player_count', new_count)
-  redis.call('HSET', 'room:info:' .. room_id, 'last_activity_at', timestamp)
+  local new_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
+  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', new_count)
+  redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', new_count)
+  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'last_activity_at', timestamp)
   redis.call('ZADD', 'rooms:all', timestamp, room_id)
   
   return {ok = 'SUCCESS', player_count = new_count}
@@ -586,11 +586,11 @@ local repair_script = [[
   
   for i, room_id in ipairs(room_ids) do
     -- 重新计算房间人数
-    local actual_count = redis.call('SCARD', 'room:members:' .. room_id)
+    local actual_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
     
     -- 更新信息中的人数
-    redis.call('HSET', 'room:info:' .. room_id, 'player_count', actual_count)
-    redis.call('HSET', 'room:metadata:' .. room_id, 'player_count', actual_count)
+    redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', actual_count)
+    redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', actual_count)
   end
   
   return 'REPAIR_COMPLETED'
@@ -602,25 +602,25 @@ local repair_script = [[
 **乐观锁机制:**
 ```redis
 # 使用版本号避免并发冲突
-WATCH room:metadata:room123
+WATCH room:metadata:{room123}
 
 # 检查版本号
-version = HGET room:metadata:room123 "version"
+version = HGET room:metadata:{room123} "version"
 if version != expected_version:
     UNWATCH
     return "CONFLICT"
 
 # 执行更新
 MULTI
-  HSET room:metadata:room123 "status" "playing"
-  HINCRBY room:metadata:room123 "version" 1
+  HSET room:metadata:{room123} "status" "playing"
+  HINCRBY room:metadata:{room123} "version" 1
 EXEC
 ```
 
 **最后写入获胜 (Last Write Wins):**
 ```redis
 # 对于状态更新，总是接受最新的写入
-HSET room:state:room123 "player_alice_position" '{"x":120,"y":250,"timestamp":1640995400}'
+HSET room:state:{room123} "player_alice_position" '{"x":120,"y":250,"timestamp":1640995400}'
 ```
 
 ---
@@ -644,9 +644,9 @@ CONFIG SET zset-max-ziplist-value 64
 SETEX player:session:alice 3600 "room123"  # 1小时过期
 
 # 为已结束的房间设置过期时间
-EXPIRE room:state:room123 86400  # 24小时后清理
-EXPIRE room:metadata:room123 86400
-EXPIRE room:members:room123 86400
+EXPIRE room:state:{room123} 86400  # 24小时后清理
+EXPIRE room:metadata:{room123} 86400
+EXPIRE room:members:{room123} 86400
 ```
 
 ### 2. 读写性能优化
@@ -655,19 +655,19 @@ EXPIRE room:members:room123 86400
 ```redis
 # 使用Pipeline批量获取房间信息
 PIPELINE
-  HGETALL room:info:room123
-  HGETALL room:info:room124  
-  HGETALL room:info:room125
+  HGETALL room:info:{room123}
+  HGETALL room:info:{room124}  
+  HGETALL room:info:{room125}
 EXEC
 ```
 
 #### 读写分离
 ```redis
 # 写操作发送到主节点
-redis_master.hset("room:state:room123", "score", "100")
+redis_master.hset("room:state:{room123}", "score", "100")
 
 # 读操作从从节点读取
-redis_slave.hget("room:state:room123", "score")
+redis_slave.hget("room:state:{room123}", "score")
 ```
 
 ### 3. 网络优化
@@ -698,9 +698,9 @@ const redis = new Redis.Cluster([
 ```typescript
 // 将多个小请求合并为批量操作
 const pipeline = redis.pipeline();
-pipeline.hget('room:info:room123', 'name');
-pipeline.hget('room:info:room123', 'status');
-pipeline.scard('room:members:room123');
+pipeline.hget('room:info:{room123}', 'name');
+pipeline.hget('room:info:{room123}', 'status');
+pipeline.scard('room:members:{room123}');
 const results = await pipeline.exec();
 ```
 
@@ -719,7 +719,7 @@ class RoomInfoCache {
       return cached.data;
     }
     
-    const data = await redis.hgetall(`room:info:${roomId}`);
+    const data = await redis.hgetall(`room:info:{${roomId}}`);
     this.cache.set(roomId, { data, timestamp: Date.now() });
     return data;
   }
