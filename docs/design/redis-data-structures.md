@@ -73,6 +73,11 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 
 ## 核心数据结构
 
+> **📝 文档约定**: 
+> - `{roomId}`, `{playerId}` 等大括号表示**占位符**，实际使用时替换为具体值
+> - 示例：`room:state:{roomId}` → `room:state:room123`
+> - Redis命令中直接使用具体值，无需大括号
+
 ### 房间核心数据
 
 房间相关的数据是系统的核心，设计了多层次的存储结构：
@@ -81,7 +86,8 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 
 ```redis
 # 数据结构: HASH
-# Key: room:state:{roomId}
+# Key模板: room:state:{roomId}
+# 实际示例: room:state:room123
 # 用途: 存储房间内的所有游戏状态 (使用短playerId)
 
 HSET room:state:room123 
@@ -114,28 +120,34 @@ HSET room:state:room123
 
 #### 2. 房间成员与玩家映射 (Room Members & Player Mapping)
 
+> **Key格式说明**: 文档中 `{roomId}` 表示占位符，实际使用时替换为具体房间ID，如 `room123`
+
 ```redis
 # 房间成员列表 (使用短playerId)
 # 数据结构: SET
-# Key: room:members:{roomId}
+# Key模板: room:members:{roomId}
+# 实际示例: room:members:room123
 SADD room:members:room123 1 2 3
 
 # 玩家ID计数器
-# 数据结构: STRING
-# Key: room:player_counter:{roomId}
+# 数据结构: STRING  
+# Key模板: room:player_counter:{roomId}
+# 实际示例: room:player_counter:room123
 SET room:player_counter:room123 3
 
 # OpenID到PlayerId的映射
 # 数据结构: HASH
-# Key: room:openid_mapping:{roomId}
+# Key模板: room:openid_mapping:{roomId} 
+# 实际示例: room:openid_mapping:room123
 HSET room:openid_mapping:room123
   "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4" "1"
   "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5" "2"
   "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6" "3"
 
 # PlayerId到OpenID的反向映射
-# 数据结构: HASH  
-# Key: room:player_mapping:{roomId}
+# 数据结构: HASH
+# Key模板: room:player_mapping:{roomId}
+# 实际示例: room:player_mapping:room123  
 HSET room:player_mapping:room123
   "1" "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
   "2" "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5"
@@ -143,7 +155,8 @@ HSET room:player_mapping:room123
 
 # 玩家加入时间 (使用短playerId)
 # 数据结构: HASH
-# Key: room:join_time:{roomId}
+# Key模板: room:join_time:{roomId}
+# 实际示例: room:join_time:room123
 HSET room:join_time:room123
   "1" "1640995200"
   "2" "1640995210" 
@@ -178,8 +191,9 @@ HGET room:player_mapping:room123 "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9B
 #### 3. 房间元数据 (Room Metadata)
 
 ```redis
-# 数据结构: HASH  
-# Key: room:metadata:{roomId}
+# 数据结构: HASH
+# Key模板: room:metadata:{roomId}
+# 实际示例: room:metadata:room123
 # 用途: 存储房间的配置和管理信息
 
 HSET room:metadata:room123
