@@ -666,25 +666,25 @@ message ErrorResponse {
 
 #### **5.2.1 房间核心数据 (Room Core Data)**
 
-> **Key格式说明**: 文档中 `{roomId}` 表示占位符，实际使用时替换为具体房间ID
+> **🔥 Redis 哈希标签**: `{roomId}` 是Redis Cluster哈希标签，确保同一房间所有数据存储在同一节点，支持原子性操作
 
 - **房间状态**: `room:state:{roomId}` (HASH)
     - 存储一个房间内所有 Key-Value 状态。Key为状态名，Value为Protobuf `Value` 序列化后的二进制数据。
-    - 示例：`room:state:room123`
+    - 哈希标签确保数据局部性：`room:state:{room123}`
 - **房间成员**: `room:members:{roomId}` (SET)
     - 存储一个房间内所有 `PlayerId`（数字短ID，如 1, 2, 3）。
-    - 示例：`room:members:room123`
+    - 与房间状态在同一节点：`room:members:{room123}`
 - **房间元数据**: `room:metadata:{roomId}` (HASH)
     - 存储房间的详细元信息，如`ownerId`, `creationTime`, `maxPlayers`, `gameMode`等。
-    - 示例：`room:metadata:room123`
+    - 哈希标签保证一致性：`room:metadata:{room123}`
 - **玩家映射**: 
     - `room:openid_mapping:{roomId}` (HASH): OpenID → PlayerId 映射
     - `room:player_mapping:{roomId}` (HASH): PlayerId → OpenID 反向映射
     - `room:player_counter:{roomId}` (STRING): 房间内PlayerId计数器
-    - 示例：`room:openid_mapping:room123`
+    - 所有映射数据在同一节点：`room:openid_mapping:{room123}`
 - **更新通道**: `room:channel:{roomId}` (Pub/Sub Channel)
     - 用于在服务器多实例之间广播状态更新事件。
-    - 示例：`room:channel:room123`
+    - 实例：`room:channel:{room123}`
 
 #### **4.2.2 房间列表与索引 (Room Listing & Indexing)**
 

@@ -20,6 +20,61 @@
 
 RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支持高并发的实时状态同步和房间管理。
 
+### 🔥 Redis 哈希标签机制
+
+RealSync 大量使用 **Redis 哈希标签 (Hash Tags)** 来优化集群性能：
+
+```redis
+# ✅ 使用哈希标签 - 同一房间数据在同一节点
+room:state:{room123}      # 房间状态
+room:members:{room123}    # 房间成员  
+room:metadata:{room123}   # 房间元数据
+
+# ❌ 不使用哈希标签 - 数据可能分散到不同节点
+room:state:room123        # 可能在节点A
+room:members:room123      # 可能在节点B
+room:metadata:room123     # 可能在节点C
+```
+
+**哈希标签的关键优势:**
+- 🎯 **数据局部性**: 确保同一房间的所有相关数据存储在同一个Redis节点
+- ⚡ **性能优化**: 避免跨节点查询，减少网络延迟
+- 🔒 **原子性操作**: 支持MULTI/EXEC事务和Lua脚本的原子性
+- 📊 **批量操作**: 可以在单个节点上执行复杂的批量操作
+
+#### 哈希标签工作原理
+
+```typescript
+// Redis 计算哈希槽的逻辑
+function getHashSlot(key: string): number {
+  const hashtagMatch = key.match(/\{([^}]*)\}/);
+  const effectiveKey = hashtagMatch ? hashtagMatch[1] : key;
+  return crc16(effectiveKey) % 16384;
+}
+
+// 示例计算
+getHashSlot('room:state:{room123}');     // 基于 'room123' 计算
+getHashSlot('room:members:{room123}');   // 基于 'room123' 计算 (相同!)
+getHashSlot('room:state:room123');       // 基于整个key计算 (不同!)
+```
+
+#### 原子性操作示例
+
+```redis
+# ✅ 可以使用事务 - 所有key在同一节点
+MULTI
+  HSET room:state:{room123} "player_count" "4"
+  SADD room:members:{room123} "4" 
+  HSET room:metadata:{room123} "status" "full"
+EXEC
+
+# ❌ 无法使用事务 - key可能在不同节点
+MULTI
+  HSET room:state:room123 "player_count" "4"    # 节点A
+  SADD room:members:room456 "1"                  # 节点B
+EXEC  # 会报错: CROSSSLOT Keys in request don't hash to the same slot
+```
+
 ### 数据存储职责
 
 ```
@@ -73,10 +128,11 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 
 ## 核心数据结构
 
-> **📝 文档约定**: 
-> - `{roomId}`, `{playerId}` 等大括号表示**占位符**，实际使用时替换为具体值
-> - 示例：`room:state:{roomId}` → `room:state:room123`
-> - Redis命令中直接使用具体值，无需大括号
+> **🔥 重要：Redis 哈希标签机制**: 
+> - `{roomId}` 是 **Redis Cluster 哈希标签**，不是占位符！
+> - 哈希标签确保同一房间的所有数据存储在同一个Redis节点
+> - 实际使用：`room:state:{room123}` （保留大括号）
+> - 这是Redis集群数据局部性和原子性操作的关键机制
 
 ### 房间核心数据
 
@@ -86,11 +142,10 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 
 ```redis
 # 数据结构: HASH
-# Key模板: room:state:{roomId}
-# 实际示例: room:state:room123
+# Key: room:state:{roomId} - 使用哈希标签确保数据局部性
 # 用途: 存储房间内的所有游戏状态 (使用短playerId)
 
-HSET room:state:room123 
+HSET room:state:{room123} 
   "player_1_position" '{"x":100,"y":200,"timestamp":1640995200000}'
   "player_2_health" "85"
   "player_3_score" "250"
@@ -120,44 +175,37 @@ HSET room:state:room123
 
 #### 2. 房间成员与玩家映射 (Room Members & Player Mapping)
 
-> **Key格式说明**: 文档中 `{roomId}` 表示占位符，实际使用时替换为具体房间ID，如 `room123`
-
 ```redis
-# 房间成员列表 (使用短playerId)
+# 房间成员列表 (使用短playerId + 哈希标签)
 # 数据结构: SET
-# Key模板: room:members:{roomId}
-# 实际示例: room:members:room123
-SADD room:members:room123 1 2 3
+# Key: room:members:{roomId} - {roomId}是哈希标签，保持原样
+SADD room:members:{room123} 1 2 3
 
 # 玩家ID计数器
-# 数据结构: STRING  
-# Key模板: room:player_counter:{roomId}
-# 实际示例: room:player_counter:room123
-SET room:player_counter:room123 3
+# 数据结构: STRING
+# Key: room:player_counter:{roomId}
+SET room:player_counter:{room123} 3
 
 # OpenID到PlayerId的映射
 # 数据结构: HASH
-# Key模板: room:openid_mapping:{roomId} 
-# 实际示例: room:openid_mapping:room123
-HSET room:openid_mapping:room123
+# Key: room:openid_mapping:{roomId}
+HSET room:openid_mapping:{room123}
   "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4" "1"
   "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5" "2"
   "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6" "3"
 
 # PlayerId到OpenID的反向映射
 # 数据结构: HASH
-# Key模板: room:player_mapping:{roomId}
-# 实际示例: room:player_mapping:room123  
-HSET room:player_mapping:room123
+# Key: room:player_mapping:{roomId}
+HSET room:player_mapping:{room123}
   "1" "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
   "2" "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5"
   "3" "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6"
 
 # 玩家加入时间 (使用短playerId)
 # 数据结构: HASH
-# Key模板: room:join_time:{roomId}
-# 实际示例: room:join_time:room123
-HSET room:join_time:room123
+# Key: room:join_time:{roomId}
+HSET room:join_time:{room123}
   "1" "1640995200"
   "2" "1640995210" 
   "3" "1640995220"
@@ -192,11 +240,10 @@ HGET room:player_mapping:room123 "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9B
 
 ```redis
 # 数据结构: HASH
-# Key模板: room:metadata:{roomId}
-# 实际示例: room:metadata:room123
+# Key: room:metadata:{roomId} - 哈希标签确保与房间状态在同一节点
 # 用途: 存储房间的配置和管理信息
 
-HSET room:metadata:room123
+HSET room:metadata:{room123}
   "name" "Epic Battle Arena"
   "game_mode" "battle"
   "max_players" "4"
