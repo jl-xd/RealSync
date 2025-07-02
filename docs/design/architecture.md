@@ -1135,3 +1135,536 @@ RealSync 采用现代化的开发和部署流程，确保高质量的代码交�
 - **[项目管理](../project-manager/todo.md)** - 开发进度和任务跟踪
 
 文档更新遵循代码变更同步的原则，确保文档与实现的一致性。
+
+## **7. 网关抽象层设计**
+
+### **7.1 设计理念**
+
+为了支持未来的架构演进（如独立状态服务、云函数托管等），RealSync网关采用**多层抽象架构**，将业务逻辑与具体的存储和计算实现解耦。
+
+**核心原则:**
+- **业务分离**: 房间管理与游戏局状态同步完全解耦
+- **存储抽象**: 支持多种后端存储方案的热插拔
+- **计算抽象**: 支持本地逻辑、云函数、边缘计算等多种执行环境
+- **协议统一**: 对外API保持一致，内部实现可灵活替换
+
+### **7.2 抽象层架构**
+
+```typescript
+┌─────────────────────────────────────────────────────────────┐
+│                        Gateway API Layer                    │
+├─────────────────────────────────────────────────────────────┤
+│                     Business Logic Layer                    │
+├─────────────────┬───────────────────┬─────────────────────────┤
+│   Room Service  │  Game Session     │   Cloud Function       │
+│   (房间管理)     │  (游戏局状态)      │   (云函数托管)           │
+├─────────────────┼───────────────────┼─────────────────────────┤
+│                 │  Storage Adapter  │   Compute Adapter       │
+├─────────────────┼───────────────────┼─────────────────────────┤
+│   Redis Cluster │  Redis / Custom   │   Local / Serverless    │
+│   (房间索引)     │  (状态存储)        │   (执行环境)            │
+└─────────────────┴───────────────────┴─────────────────────────┘
+```
+
+### **7.3 核心抽象接口**
+
+#### **存储抽象 (Storage Adapter)**
+
+```typescript
+// 存储适配器基础接口
+interface IStorageAdapter {
+  // 基础操作
+  get(key: string): Promise<any>;
+  set(key: string, value: any): Promise<void>;
+  delete(key: string): Promise<void>;
+  
+  // 批量操作
+  mget(keys: string[]): Promise<any[]>;
+  mset(keyValues: Record<string, any>): Promise<void>;
+  
+  // 事务支持
+  transaction(): ITransaction;
+  
+  // 发布订阅
+  publish(channel: string, message: any): Promise<void>;
+  subscribe(channel: string, handler: (message: any) => void): Promise<void>;
+}
+
+// 事务接口
+interface ITransaction {
+  get(key: string): ITransaction;
+  set(key: string, value: any): ITransaction;
+  delete(key: string): ITransaction;
+  exec(): Promise<any[]>;
+  discard(): Promise<void>;
+}
+
+// Redis适配器实现
+class RedisStorageAdapter implements IStorageAdapter {
+  constructor(private redis: Redis.Cluster) {}
+  
+  async get(key: string): Promise<any> {
+    return await this.redis.get(key);
+  }
+  
+  async set(key: string, value: any): Promise<void> {
+    await this.redis.set(key, JSON.stringify(value));
+  }
+  
+  transaction(): ITransaction {
+    return new RedisTransaction(this.redis.multi());
+  }
+  
+  async publish(channel: string, message: any): Promise<void> {
+    await this.redis.publish(channel, JSON.stringify(message));
+  }
+  
+  async subscribe(channel: string, handler: (message: any) => void): Promise<void> {
+    const subscriber = this.redis.duplicate();
+    await subscriber.subscribe(channel);
+    subscriber.on('message', (ch, msg) => {
+      if (ch === channel) {
+        handler(JSON.parse(msg));
+      }
+    });
+  }
+}
+
+// 自定义状态服务适配器（未来扩展）
+class CustomStateServiceAdapter implements IStorageAdapter {
+  constructor(private stateService: IStateService) {}
+  
+  async get(key: string): Promise<any> {
+    return await this.stateService.getState(key);
+  }
+  
+  async set(key: string, value: any): Promise<void> {
+    await this.stateService.setState(key, value);
+  }
+  
+  transaction(): ITransaction {
+    return new StateServiceTransaction(this.stateService);
+  }
+  
+  async publish(channel: string, message: any): Promise<void> {
+    await this.stateService.broadcast(channel, message);
+  }
+  
+  async subscribe(channel: string, handler: (message: any) => void): Promise<void> {
+    await this.stateService.subscribe(channel, handler);
+  }
+}
+```
+
+#### **计算抽象 (Compute Adapter)**
+
+```typescript
+// 计算适配器接口
+interface IComputeAdapter {
+  // 执行自定义逻辑
+  execute(functionName: string, context: ExecutionContext, args: any): Promise<any>;
+  
+  // 批量执行
+  executeBatch(operations: ComputeOperation[]): Promise<any[]>;
+  
+  // 注册函数
+  register(functionName: string, handler: ComputeFunction): Promise<void>;
+}
+
+// 执行上下文
+interface ExecutionContext {
+  appId: string;
+  roomId: string;
+  playerId: number;
+  openId: string;
+  timestamp: number;
+  storage: IStorageAdapter;
+}
+
+// 计算操作
+interface ComputeOperation {
+  functionName: string;
+  context: ExecutionContext;
+  args: any;
+}
+
+// 计算函数类型
+type ComputeFunction = (context: ExecutionContext, args: any) => Promise<any>;
+
+// 本地计算适配器
+class LocalComputeAdapter implements IComputeAdapter {
+  private functions = new Map<string, ComputeFunction>();
+  
+  async execute(functionName: string, context: ExecutionContext, args: any): Promise<any> {
+    const fn = this.functions.get(functionName);
+    if (!fn) throw new Error(`Function ${functionName} not found`);
+    
+    return await fn(context, args);
+  }
+  
+  async register(functionName: string, handler: ComputeFunction): Promise<void> {
+    this.functions.set(functionName, handler);
+  }
+  
+  async executeBatch(operations: ComputeOperation[]): Promise<any[]> {
+    return await Promise.all(
+      operations.map(op => this.execute(op.functionName, op.context, op.args))
+    );
+  }
+}
+
+// 云函数适配器（未来扩展）
+class CloudFunctionAdapter implements IComputeAdapter {
+  constructor(private cloudProvider: ICloudProvider) {}
+  
+  async execute(functionName: string, context: ExecutionContext, args: any): Promise<any> {
+    return await this.cloudProvider.invoke(functionName, { context, args });
+  }
+  
+  async register(functionName: string, handler: ComputeFunction): Promise<void> {
+    // 将函数部署到云端
+    await this.cloudProvider.deploy(functionName, handler);
+  }
+  
+  async executeBatch(operations: ComputeOperation[]): Promise<any[]> {
+    // 云端批量执行，可能会有更好的性能
+    return await this.cloudProvider.invokeBatch(operations);
+  }
+}
+```
+
+#### **业务服务抽象**
+
+```typescript
+// 房间服务接口
+interface IRoomService {
+  // 房间管理
+  createRoom(appId: string, options: CreateRoomOptions): Promise<RoomInfo>;
+  getRoomList(appId: string, options: GetRoomListOptions): Promise<GetRoomListResult>;
+  joinRoom(appId: string, roomId: string, openId: string): Promise<JoinRoomResult>;
+  leaveRoom(appId: string, roomId: string, playerId: number): Promise<void>;
+  
+  // 房间状态管理
+  updateRoomStatus(appId: string, roomId: string, status: RoomStatus): Promise<void>;
+  getRoomInfo(appId: string, roomId: string): Promise<RoomInfo>;
+}
+
+// 游戏局服务接口
+interface IGameSessionService {
+  // 状态同步
+  updateState(appId: string, roomId: string, playerId: number, patches: StatePatches): Promise<void>;
+  getState(appId: string, roomId: string): Promise<GameState>;
+  subscribeStateChanges(appId: string, roomId: string, handler: StateChangeHandler): Promise<void>;
+  
+  // 玩家管理
+  getPlayers(appId: string, roomId: string): Promise<PlayerInfo[]>;
+  getPlayerState(appId: string, roomId: string, playerId: number): Promise<GameState>;
+  
+  // 自定义逻辑执行
+  executeGameLogic(appId: string, roomId: string, functionName: string, args: any): Promise<any>;
+}
+
+// 云函数服务接口
+interface ICloudFunctionService {
+  // 函数调用
+  invoke(appId: string, functionName: string, context: ExecutionContext, args: any): Promise<any>;
+  
+  // 函数管理
+  deploy(appId: string, functionName: string, code: string): Promise<void>;
+  delete(appId: string, functionName: string): Promise<void>;
+  list(appId: string): Promise<string[]>;
+}
+```
+
+### **7.4 服务实现**
+
+#### **房间服务实现**
+
+```typescript
+class RoomService implements IRoomService {
+  constructor(
+    private storage: IStorageAdapter,
+    private compute: IComputeAdapter
+  ) {}
+  
+  async createRoom(appId: string, options: CreateRoomOptions): Promise<RoomInfo> {
+    const roomId = generateRoomId();
+    const roomInfo: RoomInfo = {
+      roomId,
+      name: options.name,
+      status: RoomStatus.WAITING,
+      visibility: options.visibility,
+      playerCount: 0,
+      maxPlayers: options.maxPlayers,
+      gameMode: options.gameMode,
+      ownerId: '', // 从context获取
+      createdAt: Date.now(),
+      lastActivityAt: Date.now()
+    };
+    
+    // 使用事务确保原子性
+    const tx = this.storage.transaction();
+    
+    // 存储房间信息
+    tx.set(`app:${appId}:room:info:{${appId}:${roomId}}`, roomInfo);
+    
+    // 更新索引
+    tx.set(`app:${appId}:rooms:status:waiting`, roomId);
+    tx.set(`app:${appId}:rooms:public:waiting`, roomId);
+    tx.set(`app:${appId}:rooms:gamemode:${options.gameMode}:waiting`, roomId);
+    
+    await tx.exec();
+    
+    return roomInfo;
+  }
+  
+  async getRoomList(appId: string, options: GetRoomListOptions): Promise<GetRoomListResult> {
+    // 根据查询条件选择合适的索引
+    const indexKey = this.buildIndexKey(appId, options);
+    const roomIds = await this.storage.get(indexKey);
+    
+    // 批量获取房间信息
+    const roomInfoKeys = roomIds.map(id => `app:${appId}:room:info:{${appId}:${id}}`);
+    const roomInfos = await this.storage.mget(roomInfoKeys);
+    
+    return {
+      rooms: roomInfos.filter(Boolean),
+      pagination: this.buildPagination(roomInfos.length, options)
+    };
+  }
+  
+  private buildIndexKey(appId: string, options: GetRoomListOptions): string {
+    // 索引选择逻辑
+    if (options.statusFilter && options.visibilityFilter) {
+      return `app:${appId}:rooms:${options.visibilityFilter}:${options.statusFilter}`;
+    }
+    if (options.statusFilter) {
+      return `app:${appId}:rooms:status:${options.statusFilter}`;
+    }
+    return `app:${appId}:rooms:all`;
+  }
+}
+```
+
+#### **游戏局服务实现**
+
+```typescript
+class GameSessionService implements IGameSessionService {
+  constructor(
+    private storage: IStorageAdapter,
+    private compute: IComputeAdapter
+  ) {}
+  
+  async updateState(appId: string, roomId: string, playerId: number, patches: StatePatches): Promise<void> {
+    const stateKey = `app:${appId}:room:state:{${appId}:${roomId}}`;
+    const channelKey = `app:${appId}:room:channel:{${appId}:${roomId}}`;
+    
+    // 使用事务更新状态
+    const tx = this.storage.transaction();
+    
+    for (const [key, value] of Object.entries(patches)) {
+      tx.set(`${stateKey}:${key}`, value);
+    }
+    
+    await tx.exec();
+    
+    // 广播状态变化
+    await this.storage.publish(channelKey, {
+      type: 'stateChange',
+      playerId,
+      patches,
+      timestamp: Date.now()
+    });
+  }
+  
+  async executeGameLogic(appId: string, roomId: string, functionName: string, args: any): Promise<any> {
+    // 构建执行上下文
+    const context: ExecutionContext = {
+      appId,
+      roomId,
+      playerId: args.playerId,
+      openId: args.openId,
+      timestamp: Date.now(),
+      storage: this.storage
+    };
+    
+    // 执行自定义逻辑
+    return await this.compute.execute(functionName, context, args);
+  }
+  
+  async subscribeStateChanges(appId: string, roomId: string, handler: StateChangeHandler): Promise<void> {
+    const channelKey = `app:${appId}:room:channel:{${appId}:${roomId}}`;
+    await this.storage.subscribe(channelKey, handler);
+  }
+}
+```
+
+### **7.5 配置和依赖注入**
+
+```typescript
+// 配置接口
+interface GatewayConfig {
+  storage: {
+    type: 'redis' | 'custom-state-service';
+    options: any;
+  };
+  compute: {
+    type: 'local' | 'cloud-function';
+    options: any;
+  };
+  services: {
+    roomService: {
+      enabled: boolean;
+      adapter: string;
+    };
+    gameSessionService: {
+      enabled: boolean;
+      adapter: string;
+    };
+    cloudFunctionService: {
+      enabled: boolean;
+      adapter: string;
+    };
+  };
+}
+
+// 服务容器
+class ServiceContainer {
+  private storage: IStorageAdapter;
+  private compute: IComputeAdapter;
+  private roomService: IRoomService;
+  private gameSessionService: IGameSessionService;
+  private cloudFunctionService: ICloudFunctionService;
+  
+  constructor(private config: GatewayConfig) {
+    this.initializeAdapters();
+    this.initializeServices();
+  }
+  
+  private initializeAdapters(): void {
+    // 存储适配器工厂
+    switch (this.config.storage.type) {
+      case 'redis':
+        this.storage = new RedisStorageAdapter(
+          new Redis.Cluster(this.config.storage.options)
+        );
+        break;
+      case 'custom-state-service':
+        this.storage = new CustomStateServiceAdapter(
+          new StateService(this.config.storage.options)
+        );
+        break;
+      default:
+        throw new Error(`Unsupported storage type: ${this.config.storage.type}`);
+    }
+    
+    // 计算适配器工厂
+    switch (this.config.compute.type) {
+      case 'local':
+        this.compute = new LocalComputeAdapter();
+        break;
+      case 'cloud-function':
+        this.compute = new CloudFunctionAdapter(
+          new CloudProvider(this.config.compute.options)
+        );
+        break;
+      default:
+        throw new Error(`Unsupported compute type: ${this.config.compute.type}`);
+    }
+  }
+  
+  private initializeServices(): void {
+    if (this.config.services.roomService.enabled) {
+      this.roomService = new RoomService(this.storage, this.compute);
+    }
+    
+    if (this.config.services.gameSessionService.enabled) {
+      this.gameSessionService = new GameSessionService(this.storage, this.compute);
+    }
+    
+    if (this.config.services.cloudFunctionService.enabled) {
+      this.cloudFunctionService = new CloudFunctionService(this.compute);
+    }
+  }
+  
+  // 获取服务实例
+  getRoomService(): IRoomService { return this.roomService; }
+  getGameSessionService(): IGameSessionService { return this.gameSessionService; }
+  getCloudFunctionService(): ICloudFunctionService { return this.cloudFunctionService; }
+}
+```
+
+### **7.6 未来扩展场景**
+
+#### **场景1: 独立状态服务**
+
+```typescript
+// 配置切换到独立状态服务
+const config: GatewayConfig = {
+  storage: {
+    type: 'custom-state-service',
+    options: {
+      endpoint: 'https://state-service.realsync.io',
+      apiKey: 'state-service-key'
+    }
+  },
+  compute: {
+    type: 'local',
+    options: {}
+  },
+  services: {
+    roomService: { enabled: true, adapter: 'redis' }, // 房间管理仍用Redis
+    gameSessionService: { enabled: true, adapter: 'custom' }, // 游戏局用独立服务
+    cloudFunctionService: { enabled: false, adapter: 'none' }
+  }
+};
+```
+
+#### **场景2: 云函数托管**
+
+```typescript
+// 配置支持云函数
+const config: GatewayConfig = {
+  storage: {
+    type: 'redis',
+    options: { /* redis config */ }
+  },
+  compute: {
+    type: 'cloud-function',
+    options: {
+      provider: 'aws-lambda',
+      region: 'us-west-2',
+      credentials: { /* AWS credentials */ }
+    }
+  },
+  services: {
+    roomService: { enabled: true, adapter: 'redis' },
+    gameSessionService: { enabled: true, adapter: 'redis' },
+    cloudFunctionService: { enabled: true, adapter: 'aws' } // 启用云函数
+  }
+};
+
+// 客户端可以执行云函数
+const result = await client.executeCloudFunction('calculateDamage', {
+  attackerId: 1,
+  targetId: 2,
+  weaponType: 'sword',
+  criticalChance: 0.15
+});
+```
+
+### **7.7 优势总结**
+
+**架构优势:**
+- **🔧 灵活性**: 可以独立替换存储、计算组件
+- **📈 可扩展性**: 支持水平扩展和垂直扩展
+- **🎯 业务专注**: 清晰的业务边界和职责分离
+- **🔄 热切换**: 支持运行时配置变更
+
+**技术优势:**
+- **接口统一**: 对外API保持稳定
+- **实现多样**: 内部可以使用不同技术栈
+- **性能优化**: 针对不同场景选择最佳方案
+- **成本控制**: 根据业务需求选择合适的基础设施
+
+这种抽象层设计确保了RealSync在支持当前Redis架构的同时，为未来的技术演进提供了充分的灵活性。
