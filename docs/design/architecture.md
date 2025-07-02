@@ -860,13 +860,13 @@ TypeScript SDK 的设计遵循现代 JavaScript 生态系统的最佳实践，�
 - **多环境支持**: 浏览器、Node.js、Electron 等多平台兼容
 
 #### **基本用法示例**
-
+    
 ```typescript
 import { RealSyncClient, RoomStatus } from 'realsync-sdk';
-
+    
 // 初始化客户端
-const client = new RealSyncClient({
-  serverUrl: 'wss://connect.realsync.io',
+    const client = new RealSyncClient({
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j', // 纯客户端开发，API密钥可安全暴露
   tokenProvider: async () => await getAuthToken()
 });
 
@@ -896,7 +896,7 @@ const newRoom = await client.createRoom({
     }
   }
 });
-
+    
 // 加入房间并监听状态变化
 const room = await client.joinRoom('room-123');
 room.on('stateChange', (patches, sourcePlayerId) => {
@@ -928,7 +928,7 @@ await room.state.batch()
 // 便利的玩家操作API
 await room.player(client.playerId).set('health', 85);
 await room.player(client.playerId).set('position', { x: 100, y: 200 });
-
+    
 // 状态读取
 const playerHealth = room.state.get(`player_${client.playerId}_health`);
 const gamePhase = room.state.get('gamePhase');
@@ -1009,7 +1009,7 @@ C# SDK 专为 Unity 游戏引擎优化，提供与 Unity 开发流程深度集�
 ```csharp
 // 基本用法预览 - 分段式API设计
 var client = new RealSyncClient(new ClientOptions {
-    ServerUrl = "wss://connect.realsync.io",
+    ApiKey = "ak_1a2b3c4d5e6f7g8h9i0j", // 纯客户端开发，API密钥可安全暴露
     TokenProvider = () => Task.FromResult(GetAuthToken())
 });
 
@@ -1032,12 +1032,12 @@ var newRoom = await client.CreateRoomAsync(new CreateRoomOptions {
             rules = new[] { "no-camping", "friendly-fire" }
         }
     }
-});
-
+            });
+    
 var room = await client.JoinRoomAsync("room-123");
-
+    
 // Unity友好的事件监听 - 简化的数据格式
-room.OnStateChange += (patches, sourcePlayerId) => {
+            room.OnStateChange += (patches, sourcePlayerId) => {
     // patches 现在是 Dictionary<string, object>
     Debug.Log($"State updated by {sourcePlayerId}");
     

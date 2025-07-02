@@ -34,17 +34,189 @@ yarn add realsync-sdk
 import { RealSyncClient } from 'realsync-sdk';
 
 const client = new RealSyncClient({
+  // 🔑 必需：应用API密钥（用于多租户隔离）
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j', // 从RealSync控制台获取
+  
+  // 🌐 可选：服务器地址（默认为官方服务）
   serverUrl: 'wss://connect.realsync.io',
+  
+  // 🔐 必需：用户身份令牌提供者
   tokenProvider: async () => {
-    // 返回JWT token
+    // 返回用户的JWT token（包含OpenID）
     return await getAuthToken();
   },
-  // 可选配置
+  
+  // ⚙️ 可选配置
   reconnectAttempts: 5,
   reconnectDelay: 1000,
   heartbeatInterval: 30000,
   debug: false
 });
+```
+
+#### API密钥 (apiKey) 详解
+
+##### 🔑 获取API密钥
+
+API密钥是您的应用在RealSync平台的唯一标识，用于：
+- **应用隔离**: 确保不同应用的数据完全隔离
+- **权限控制**: 限制应用只能访问自己的数据
+- **配额管理**: 监控和管理应用的资源使用
+
+**获取步骤：**
+1. 访问 [RealSync 开发者控制台](https://console.realsync.io)
+2. 创建新应用或选择现有应用
+3. 在应用设置页面复制API密钥
+
+**API密钥格式：**
+```
+ak_1a2b3c4d5e6f7g8h9i0j  # 以 'ak_' 开头的26字符字符串
+```
+
+##### 🌟 纯客户端开发特性
+
+> ✨ **RealSync 核心优势**: API密钥设计为**客户端安全**，支持纯前端开发，无需后端服务！
+
+API密钥的安全设计原则（类似 Firebase）：
+- **🔓 客户端友好**: 可以安全地暴露在前端代码中
+- **🛡️ 权限隔离**: 每个应用的API密钥只能访问自己的数据
+- **🚫 无敏感操作**: 不包含删除应用、修改配额等管理权限
+- **🔍 透明可控**: 可在控制台随时查看和重置
+
+**✅ 推荐做法 - 纯客户端开发:**
+```typescript
+// 前端游戏客户端 - 完全可以直接使用
+const client = new RealSyncClient({
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j', // ✅ 完全安全，可以暴露
+  tokenProvider: async () => {
+    // 用户认证token（如Firebase Auth、Auth0等）
+    return await getUserAuthToken(); 
+  }
+});
+
+// 直接在客户端创建房间
+const room = await client.createRoom({
+  name: 'My Game Room',
+  gameMode: 'battle',
+  maxPlayers: 4,
+  visibility: RoomVisibility.PUBLIC
+});
+```
+
+**🎯 与传统方案对比:**
+```typescript
+// ❌ 传统方案：需要复杂的后端架构
+// Backend API + 客户端代理 = 开发复杂度 ↑↑↑
+
+// ✅ RealSync：纯客户端开发
+// 直接调用SDK = 开发复杂度 ↓↓↓
+const client = new RealSyncClient({ 
+  apiKey: 'ak_xxx' // 像Firebase一样简单
+});
+```
+
+##### 📱 多平台纯客户端示例
+
+```typescript
+// 🌐 Web浏览器游戏
+const webClient = new RealSyncClient({
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j',
+  tokenProvider: async () => {
+    // 使用Firebase Auth
+    const user = firebase.auth().currentUser;
+    return await user.getIdToken();
+  }
+});
+
+// 📱 React Native手机游戏
+const mobileClient = new RealSyncClient({
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j',
+  tokenProvider: async () => {
+    // 使用任何认证服务
+    return await AsyncStorage.getItem('userToken');
+  }
+});
+
+// 🎮 微信小游戏
+const wxClient = new RealSyncClient({
+  apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j',
+  tokenProvider: async () => {
+    // 使用微信登录
+    return await wx.getStorageSync('sessionToken');
+  }
+});
+```
+
+##### 🔧 配置管理最佳实践
+
+**开发环境配置:**
+```typescript
+// config/realsync.ts
+interface RealSyncConfig {
+  apiKey: string;
+  serverUrl?: string;
+  debug: boolean;
+}
+
+const configs: Record<string, RealSyncConfig> = {
+  development: {
+    apiKey: 'ak_dev_1a2b3c4d5e6f7g8h9i0j',  // 开发环境密钥
+    serverUrl: 'wss://dev.realsync.io',      // 开发服务器
+    debug: true
+  },
+  production: {
+    apiKey: 'ak_prod_9z8y7x6w5v4u3t2s',     // 生产环境密钥  
+    serverUrl: 'wss://connect.realsync.io',  // 生产服务器
+    debug: false
+  }
+};
+
+export const getRealSyncConfig = (): RealSyncConfig => {
+  const env = process.env.NODE_ENV || 'development';
+  return configs[env];
+};
+
+// 使用配置
+const config = getRealSyncConfig();
+const client = new RealSyncClient({
+  ...config,
+  tokenProvider: async () => await getAuthToken()
+});
+```
+
+**条件编译优化（Webpack/Vite）:**
+```typescript
+// 使用构建工具的环境变量替换
+const client = new RealSyncClient({
+  apiKey: process.env.VITE_REALSYNC_API_KEY,  // Vite
+  // apiKey: process.env.REACT_APP_REALSYNC_API_KEY,  // Create React App
+  tokenProvider: async () => await getAuthToken()
+});
+```
+
+**动态配置加载:**
+```typescript
+// 从远程配置服务加载（可选）
+class RealSyncManager {
+  private client: RealSyncClient | null = null;
+  
+  async initialize() {
+    // 从你的配置API加载
+    const config = await fetch('/api/game-config').then(r => r.json());
+    
+    this.client = new RealSyncClient({
+      apiKey: config.realSyncApiKey,
+      tokenProvider: async () => await this.getPlayerToken()
+    });
+    
+    await this.client.connectAsync();
+  }
+  
+  private async getPlayerToken(): Promise<string> {
+    // 获取当前玩家的认证token
+    return await getCurrentUserToken();
+  }
+}
 ```
 
 ---
@@ -603,22 +775,25 @@ room.on('playerLeft', (playerId: string, roomInfo: RoomInfo) => {
 
 ```typescript
 interface ClientOptions {
-  /** 服务器WebSocket URL */
-  serverUrl: string;
+  /** 🔑 应用API密钥，用于多租户隔离（必需） */
+  apiKey: string;
   
-  /** Token提供函数，用于身份验证 */
+  /** 🌐 服务器WebSocket URL，默认: 'wss://connect.realsync.io' */
+  serverUrl?: string;
+  
+  /** 🔐 Token提供函数，用于用户身份验证（必需） */
   tokenProvider: () => Promise<string>;
   
-  /** 重连尝试次数，默认: 5 */
+  /** ⚙️ 重连尝试次数，默认: 5 */
   reconnectAttempts?: number;
   
-  /** 重连延迟（毫秒），默认: 1000 */
+  /** ⚙️ 重连延迟（毫秒），默认: 1000 */
   reconnectDelay?: number;
   
-  /** 心跳间隔（毫秒），默认: 30000 */
+  /** ⚙️ 心跳间隔（毫秒），默认: 30000 */
   heartbeatInterval?: number;
   
-  /** 启用调试日志，默认: false */
+  /** 🐛 启用调试日志，默认: false */
   debug?: boolean;
 }
 ```
@@ -1067,7 +1242,7 @@ class GameLobby {
 
   constructor() {
     this.client = new RealSyncClient({
-      serverUrl: 'wss://connect.realsync.io',
+      apiKey: 'ak_1a2b3c4d5e6f7g8h9i0j', // ✨ 纯客户端开发
       tokenProvider: () => this.getAuthToken(),
       debug: process.env.NODE_ENV === 'development'
     });
@@ -1300,8 +1475,20 @@ class GameSession {
 ```csharp
 // 基本用法预览
 var client = new RealSyncClient(new ClientOptions {
+    // 🔑 必需：应用API密钥
+    ApiKey = "ak_1a2b3c4d5e6f7g8h9i0j", // 从RealSync控制台获取
+    
+    // 🌐 可选：服务器地址
     ServerUrl = "wss://connect.realsync.io",
-    TokenProvider = () => Task.FromResult(GetAuthToken())
+    
+    // 🔐 必需：用户身份令牌提供者
+    TokenProvider = () => Task.FromResult(GetAuthToken()),
+    
+    // ⚙️ 可选配置
+    ReconnectAttempts = 5,
+    ReconnectDelay = 1000,
+    HeartbeatInterval = 30000,
+    Debug = false
 });
 
 await client.ConnectAsync();
@@ -1312,6 +1499,74 @@ var room = await client.JoinRoomAsync("room-123");
 room.OnStateChange += (patches, sourcePlayerId) => {
     // Unity主线程中处理状态更新
 };
+```
+
+#### Unity环境配置示例
+
+```csharp
+// Unity ScriptableObject配置
+[CreateAssetMenu(fileName = "RealSyncConfig", menuName = "RealSync/Config")]
+public class RealSyncConfig : ScriptableObject
+{
+    [Header("🔑 认证配置")]
+    [SerializeField] private string apiKey = "ak_your_api_key_here";
+    
+    [Header("🌐 连接配置")]
+    [SerializeField] private string serverUrl = "wss://connect.realsync.io";
+    
+    [Header("⚙️ 性能配置")]
+    [SerializeField] private int reconnectAttempts = 5;
+    [SerializeField] private int reconnectDelay = 1000;
+    [SerializeField] private bool debugMode = false;
+
+    public ClientOptions GetClientOptions()
+    {
+        return new ClientOptions
+        {
+            ApiKey = apiKey,
+            ServerUrl = serverUrl,
+            TokenProvider = async () => await GetUserToken(),
+            ReconnectAttempts = reconnectAttempts,
+            ReconnectDelay = reconnectDelay,
+            Debug = debugMode
+        };
+    }
+    
+    private async Task<string> GetUserToken()
+    {
+        // 从Unity Authentication或自定义认证系统获取token
+        // 示例使用Unity Authentication
+        if (AuthenticationService.Instance.IsSignedIn)
+        {
+            return await AuthenticationService.Instance.GetAccessTokenAsync();
+        }
+        
+        throw new InvalidOperationException("User not authenticated");
+    }
+}
+
+// Unity游戏管理器
+public class GameManager : MonoBehaviour
+{
+    [SerializeField] private RealSyncConfig config;
+    private RealSyncClient client;
+    
+    async void Start()
+    {
+        // ✨ 纯客户端开发：API密钥可以安全地包含在Unity构建中
+        client = new RealSyncClient(config.GetClientOptions());
+        
+        try
+        {
+            await client.ConnectAsync();
+            Debug.Log("✅ Connected to RealSync");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"❌ Failed to connect: {e.Message}");
+        }
+    }
+}
 ```
 
 > 📝 **计划发布时间**: 2024年Q1  

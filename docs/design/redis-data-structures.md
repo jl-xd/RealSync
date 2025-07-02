@@ -1,18 +1,53 @@
-# RealSync Redis 数据结构设计文档
+# Redis 数据结构设计
 
-版本: 1.0  
-更新时间: 2024-01-01
+本文档是 RealSync Redis 数据结构设计的总览，包含共同的设计原则、架构基础，以及业务具体实现的导航。
 
-## 📋 目录
+为了便于理解和维护，具体的业务实现按照职责分为以下两个部分：
 
-- [架构概览](#架构概览)
-- [设计原则](#设计原则)
-- [核心数据结构](#核心数据结构)
-- [房间索引系统](#房间索引系统)
-- [数据一致性策略](#数据一致性策略)
-- [性能优化](#性能优化)
-- [运维与监控](#运维与监控)
-- [扩展性考虑](#扩展性考虑)
+---
+
+## 📑 业务实现文档
+
+### 🎮 [游戏局 Redis 设计](./redis-game-session.md) 
+**游戏内实时状态同步**
+
+- 🎯 实时游戏状态存储
+- 👥 玩家会话和ID映射
+- 📡 实时消息通道 (Pub/Sub)
+- ⚛️ 原子性操作和事务
+- 🔄 冲突处理机制
+
+### 🏛️ [房间服务 Redis 设计](./redis-room-service.md)
+**游戏大厅和房间管理**
+
+- 📋 房间列表索引
+- 🔍 多维度查询和搜索
+- 📊 房间状态管理
+- 🎪 游戏大厅功能
+- 📈 统计和分析
+
+---
+
+## 🎯 设计理念
+
+### 业务分离的优势
+
+**清晰的职责边界**: 游戏局专注于高频实时同步，房间服务专注于查询和管理
+
+**独立的演进路径**: 未来可以灵活替换游戏局的存储方案（如自建状态同步服务），而不影响房间管理
+
+**便于理解和维护**: 开发者可以根据需要专注于特定的业务领域
+
+**性能优化针对性**: 不同业务场景可以采用不同的优化策略
+
+### 技术架构统一
+
+虽然业务分离，但技术架构保持统一：
+
+- **🔥 联合哈希标签**: `{appId:roomId}` 确保数据局部性和多租户负载均衡
+- **🔐 应用隔离**: `app:{appId}:` 前缀实现完全的多租户数据隔离
+- **⚛️ 原子性操作**: Lua脚本和Redis事务保证数据一致性
+- **📊 性能优化**: 批量操作、读写分离、缓存策略
 
 ---
 
@@ -25,15 +60,15 @@ RealSync 使用 **Redis 集群** 作为核心数据存储和消息队列，支�
 RealSync 大量使用 **Redis 哈希标签 (Hash Tags)** 来优化集群性能：
 
 ```redis
-# ✅ 使用哈希标签 - 同一房间数据在同一节点
-room:state:{room123}      # 房间状态
-room:members:{room123}    # 房间成员  
-room:metadata:{room123}   # 房间元数据
+# ✅ 使用联合哈希标签 - 同一房间数据在同一节点，不同应用分散
+app:game123:room:state:{game123:room456}      # 房间状态
+app:game123:room:members:{game123:room456}    # 房间成员  
+app:game123:room:metadata:{game123:room456}   # 房间元数据
 
 # ❌ 不使用哈希标签 - 数据可能分散到不同节点
-room:state:room123        # 可能在节点A
-room:members:room123      # 可能在节点B
-room:metadata:room123     # 可能在节点C
+app:game123:room:state:room456        # 可能在节点A
+app:game123:room:members:room456      # 可能在节点B
+app:game123:room:metadata:room456     # 可能在节点C
 ```
 
 **哈希标签的关键优势:**
@@ -53,25 +88,25 @@ function getHashSlot(key: string): number {
 }
 
 // 示例计算
-getHashSlot('room:state:{room123}');     // 基于 'room123' 计算
-getHashSlot('room:members:{room123}');   // 基于 'room123' 计算 (相同!)
-getHashSlot('room:state:room123');       // 基于整个key计算 (不同!)
+getHashSlot('app:game123:room:state:{game123:room456}');     // 基于 'game123:room456' 计算
+getHashSlot('app:game123:room:members:{game123:room456}');   // 基于 'game123:room456' 计算 (相同!)
+getHashSlot('app:game123:room:state:room456');               // 基于整个key计算 (不同!)
 ```
 
 #### 原子性操作示例
 
 ```redis
-# ✅ 可以使用事务 - 所有key在同一节点
+# ✅ 可以使用事务 - 所有key在同一节点（联合哈希标签）
 MULTI
-  HSET room:state:{room123} "player_count" "4"
-  SADD room:members:{room123} "4" 
-  HSET room:metadata:{room123} "status" "full"
+  HSET app:game123:room:state:{game123:room456} "player_count" "4"
+  SADD app:game123:room:members:{game123:room456} "4" 
+  HSET app:game123:room:metadata:{game123:room456} "status" "full"
 EXEC
 
 # ❌ 无法使用事务 - key可能在不同节点
 MULTI
-  HSET room:state:room123 "player_count" "4"    # 节点A
-  SADD room:members:room456 "1"                  # 节点B
+  HSET app:game123:room:state:room456 "player_count" "4"    # 节点A
+  SADD app:game123:room:members:room789 "1"                 # 节点B
 EXEC  # 会报错: CROSSSLOT Keys in request don't hash to the same slot
 ```
 
@@ -102,6 +137,204 @@ EXEC  # 会报错: CROSSSLOT Keys in request don't hash to the same slot
 
 ---
 
+## 多租户设计
+
+RealSync 支持多个游戏应用共享同一个Redis集群，通过 **应用维度隔离** 确保数据安全和管理便利。
+
+### 🔐 设计原则
+
+**完全隔离**: 不同应用的数据完全隔离，无法相互访问  
+**命名空间**: 使用 `app:{appId}:` 作为统一的命名空间前缀  
+**权限控制**: SDK层面强制应用只能访问自己的命名空间  
+**运维友好**: 支持按应用维度进行监控、统计、清理
+
+### 🏗️ 命名空间设计
+
+#### 核心格式
+```redis
+# 原格式: room:state:{roomId}
+# 新格式: app:{appId}:room:state:{roomId}
+
+# 示例
+app:game123:room:state:{game123:room456}           # 游戏123的房间456状态
+app:game123:room:metadata:{game123:room456}        # 游戏123的房间456元数据
+app:game123:rooms:status:waiting                   # 游戏123的等待中房间列表
+app:game789:room:state:{game789:room101}           # 游戏789的房间101状态 (完全隔离)
+```
+
+#### 哈希标签策略：应用+房间联合哈希标签
+
+RealSync 采用 **联合哈希标签策略**，确保同应用同房间数据的局部性，同时实现不同应用间的负载分散：
+
+```redis
+# ✅ 同应用同房间数据在同一节点，不同应用分散到不同节点
+app:game123:room:state:{game123:room456}     # 哈希基于 "game123:room456" → 节点A
+app:game123:room:members:{game123:room456}   # 哈希基于 "game123:room456" → 节点A (相同!)
+app:game123:room:metadata:{game123:room456} # 哈希基于 "game123:room456" → 节点A (相同!)
+
+# 不同应用的相同房间ID会分布到不同节点，避免热点集中
+app:game123:room:state:{game123:room999}    # 哈希基于 "game123:room999" → 节点A  
+app:game789:room:state:{game789:room999}    # 哈希基于 "game789:room999" → 节点B (不同!)
+```
+
+**策略优势:**
+- **数据局部性**: 同房间所有数据在同一节点，支持原子事务
+- **负载均衡**: 不同应用数据分散到不同节点，避免热点
+- **应用隔离**: 天然的应用级数据分离
+- **可扩展性**: 支持大规模多租户部署
+
+#### 🔧 技术实现细节
+
+**Redis哈希槽计算验证:**
+```typescript
+// 联合哈希标签 - 不同应用分散到不同节点
+console.log(crc16('game123:room999') % 16384);  // 例如: 槽位 8234
+console.log(crc16('game789:room999') % 16384);  // 例如: 槽位 12567 ✅不同节点
+
+// 验证相同应用同房间在同一节点
+console.log(crc16('game123:room456') % 16384);  // 例如: 槽位 3421
+console.log(crc16('game123:room456') % 16384);  // 例如: 槽位 3421 ✅同一节点
+```
+
+**实现代码示例:**
+```typescript
+class RedisKeyManager {
+  // 构建房间状态Key
+  buildRoomStateKey(appId: string, roomId: string): string {
+    return `app:${appId}:room:state:{${appId}:${roomId}}`;
+  }
+  
+  // 批量操作时确保相关key使用相同联合哈希标签
+  buildRoomKeys(appId: string, roomId: string) {
+    const hashTag = `${appId}:${roomId}`;
+    return {
+      state: `app:${appId}:room:state:{${hashTag}}`,
+      members: `app:${appId}:room:members:{${hashTag}}`,
+      metadata: `app:${appId}:room:metadata:{${hashTag}}`,
+      info: `app:${appId}:room:info:{${hashTag}}`,
+      openidMapping: `app:${appId}:room:openid_mapping:{${hashTag}}`,
+      playerMapping: `app:${appId}:room:player_mapping:{${hashTag}}`,
+      joinTime: `app:${appId}:room:join_time:{${hashTag}}`,
+      playerCounter: `app:${appId}:room:player_counter:{${hashTag}}`,
+      channel: `app:${appId}:room:channel:{${hashTag}}`
+    };
+  }
+  
+  // 原子操作验证：确保所有相关key在同一节点
+  validateSameSlot(appId: string, roomId: string): boolean {
+    const keys = this.buildRoomKeys(appId, roomId);
+    const slots = Object.values(keys).map(key => {
+      const hashtagMatch = key.match(/\{([^}]*)\}/);
+      const effectiveKey = hashtagMatch ? hashtagMatch[1] : key;
+      return crc16(effectiveKey) % 16384;
+    });
+    
+    return slots.every(slot => slot === slots[0]); // 所有key必须在同一槽位
+  }
+}
+```
+
+### 📊 应用管理
+
+#### 应用注册与元数据
+```redis
+# 应用基本信息
+# 数据结构: HASH
+# Key: app:registry:{appId}
+HSET app:registry:game123
+  "name" "Epic Battle Arena"
+  "owner" "company_xyz"
+  "created_at" "1640995200"
+  "status" "active"
+  "api_key_hash" "sha256_hash_of_api_key"
+  "quota_rooms" "1000"
+  "quota_players" "10000"
+  "region" "us-west"
+  "version" "1.0"
+
+# 应用列表索引
+# 数据结构: SET
+SADD apps:active "game123" "game456" "game789"
+SADD apps:by_owner:company_xyz "game123" "game456"
+SADD apps:by_region:us_west "game123" "game789"
+```
+
+#### 应用配额监控
+```redis
+# 应用资源使用统计
+# 数据结构: HASH
+# Key: app:stats:{appId}
+HSET app:stats:game123
+  "room_count" "145"
+  "player_count" "678"
+  "daily_requests" "45000"
+  "peak_rooms" "200"
+  "peak_players" "1200"
+  "last_activity" "1640995800"
+
+# 全局应用统计
+# 数据结构: ZSET (按使用量排序)
+ZADD apps:by_room_count 145 "game123"
+ZADD apps:by_room_count 89 "game456"  
+ZADD apps:by_player_count 678 "game123"
+ZADD apps:by_player_count 234 "game456"
+```
+
+### 🔒 权限控制
+
+#### API密钥管理
+```redis
+# API密钥到应用ID的映射
+# 数据结构: HASH
+# Key: auth:api_keys
+HSET auth:api_keys
+  "ak_1a2b3c4d5e6f7g8h9i0j" "game123"
+  "ak_9z8y7x6w5v4u3t2s1r0q" "game456"
+
+# 应用权限配置
+# 数据结构: HASH  
+# Key: app:permissions:{appId}
+HSET app:permissions:game123
+  "max_room_size" "8"
+  "max_concurrent_rooms" "500"
+  "regions_allowed" "us-west,us-east"
+  "features_enabled" "voice_chat,screen_share"
+  "rate_limit_rps" "1000"
+```
+
+#### SDK层权限验证
+```typescript
+class AppIsolationMiddleware {
+  private async validateAppAccess(apiKey: string, requestedResource: string): Promise<string> {
+    // 1. 验证API密钥
+    const appId = await redis.hget('auth:api_keys', apiKey);
+    if (!appId) throw new Error('Invalid API key');
+    
+    // 2. 验证应用状态
+    const appStatus = await redis.hget(`app:registry:${appId}`, 'status');
+    if (appStatus !== 'active') throw new Error('Application suspended');
+    
+    // 3. 验证资源访问权限
+    const expectedPrefix = `app:${appId}:`;
+    if (!requestedResource.startsWith(expectedPrefix)) {
+      throw new Error('Access denied: Resource not owned by application');
+    }
+    
+    return appId;
+  }
+  
+  async createRoom(apiKey: string, roomId: string, roomData: any) {
+    const appId = await this.validateAppAccess(apiKey, `app:${appId}:room:state:${roomId}`);
+    
+    // 执行房间创建操作，使用联合哈希标签确保数据局部性和应用隔离
+    const namespacedRoomId = `app:${appId}:room:state:{${appId}:${roomId}}`;
+    await redis.hset(namespacedRoomId, roomData);
+  }
+}
+```
+
+---
+
 ## 设计原则
 
 ### 1. **数据局部性原则**
@@ -126,505 +359,6 @@ EXEC  # 会报错: CROSSSLOT Keys in request don't hash to the same slot
 
 ---
 
-## 核心数据结构
-
-> **🔥 重要：Redis 哈希标签机制**: 
-> - `{roomId}` 是 **Redis Cluster 哈希标签**，不是占位符！
-> - 哈希标签确保同一房间的所有数据存储在同一个Redis节点
-> - 实际使用：`room:state:{room123}` （保留大括号）
-> - 这是Redis集群数据局部性和原子性操作的关键机制
-
-### 房间核心数据
-
-房间相关的数据是系统的核心，设计了多层次的存储结构：
-
-#### 1. 房间状态 (Room State)
-
-```redis
-# 数据结构: HASH
-# Key: room:state:{roomId} - 使用哈希标签确保数据局部性
-# 用途: 存储房间内的所有游戏状态 (使用短playerId)
-
-HSET room:state:{room123} 
-  "player_1_position" '{"x":100,"y":200,"timestamp":1640995200000}'
-  "player_2_health" "85"
-  "player_3_score" "250"
-  "game_phase" "combat"
-  "round_timer" "60"
-  "score_red_team" "150"
-  "score_blue_team" "120"
-  "leaderboard" '[{"playerId":1,"score":250},{"playerId":2,"score":180},{"playerId":3,"score":120}]'
-```
-
-**玩家状态命名规范:**
-```redis
-# 玩家相关状态使用 player_{playerId}_{属性} 格式
-"player_1_position"     # 玩家1的位置
-"player_1_health"       # 玩家1的血量
-"player_1_inventory"    # 玩家1的道具
-"player_2_position"     # 玩家2的位置
-"player_2_health"       # 玩家2的血量
-```
-
-**设计要点:**
-- **使用短ID**: 状态键使用playerId而非openid，节省存储空间
-- **隐私保护**: 状态数据不包含任何敏感的用户信息
-- **独立更新**: 每个字段支持原子更新，减少并发冲突
-- **类型支持**: 支持数字、字符串、JSON对象、数组等任意数据类型
-- **开发友好**: 使用简单的数字ID，便于开发者处理和调试
-
-#### 2. 房间成员与玩家映射 (Room Members & Player Mapping)
-
-```redis
-# 房间成员列表 (使用短playerId + 哈希标签)
-# 数据结构: SET
-# Key: room:members:{roomId} - {roomId}是哈希标签，保持原样
-SADD room:members:{room123} 1 2 3
-
-# 玩家ID计数器
-# 数据结构: STRING
-# Key: room:player_counter:{roomId}
-SET room:player_counter:{room123} 3
-
-# OpenID到PlayerId的映射
-# 数据结构: HASH
-# Key: room:openid_mapping:{roomId}
-HSET room:openid_mapping:{room123}
-  "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4" "1"
-  "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5" "2"
-  "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6" "3"
-
-# PlayerId到OpenID的反向映射
-# 数据结构: HASH
-# Key: room:player_mapping:{roomId}
-HSET room:player_mapping:{room123}
-  "1" "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
-  "2" "oY9Uk6LcQZa8Y3l2oRmS6sWx9Id5N0ChXhGu4Zt8Lq3wO9nM7rF2sTa5"
-  "3" "oZ0Vl7MdRab9Z4m3pSnT7tXy0Je6O1DiYiHv5Au9Mr4xP0oN8sG3tUb6"
-
-# 玩家加入时间 (使用短playerId)
-# 数据结构: HASH
-# Key: room:join_time:{roomId}
-HSET room:join_time:{room123}
-  "1" "1640995200"
-  "2" "1640995210" 
-  "3" "1640995220"
-```
-
-**操作示例:**
-```redis
-# 检查PlayerId是否在房间
-SISMEMBER room:members:{room123} 1  # 返回: 1
-
-# 获取房间所有PlayerId
-SMEMBERS room:members:{room123}  # 返回: ["1", "2", "3"]
-
-# 获取房间玩家数量
-SCARD room:members:{room123}  # 返回: 3
-
-# 通过OpenID获取PlayerId
-HGET room:openid_mapping:{room123} "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"  # 返回: "1"
-
-# 通过PlayerId获取OpenID (内部验证使用)
-HGET room:player_mapping:{room123} "1"  # 返回: "oX8Tj5JbPZz9X2k1nQlR5rVv8Hc4M9BgWhFt3Ys7Kp2vN8mL6qE1rTz4"
-```
-
-**设计要点:**
-- **存储优化**: 使用4字节数字ID替代58字节字符串，节省93%存储空间
-- **隐私保护**: 开发者API只暴露PlayerId，无法获取OpenID
-- **双向映射**: 支持PlayerId↔OpenID的快速转换
-- **临时性**: PlayerId仅在房间内有效，离开后失效
-- **原子分配**: 使用Redis INCR确保PlayerId唯一性
-
-#### 3. 房间元数据 (Room Metadata)
-
-```redis
-# 数据结构: HASH
-# Key: room:metadata:{roomId} - 哈希标签确保与房间状态在同一节点
-# 用途: 存储房间的配置和管理信息
-
-HSET room:metadata:{room123}
-  "name" "Epic Battle Arena"
-  "game_mode" "battle"
-  "max_players" "4"
-  "owner_id" "alice"
-  "status" "playing"
-  "visibility" "public" 
-  "created_at" "1640995200"
-  "invite_code" "ABC123"
-  "region" "us-west"
-  "version" "1.0"
-```
-
-**设计要点:**
-- 存储房间管理所需的元信息
-- 支持部分字段更新（如状态变更）
-- 包含创建时间、版本等审计信息
-- 为私有房间存储邀请码
-
-#### 4. 实时消息通道 (Real-time Channels)
-
-```redis
-# 数据结构: Pub/Sub Channel
-# Key: room:channel:{roomId}  
-# 用途: 房间内实时消息广播 (使用短playerId)
-
-# 发布状态更新 (服务器操作)
-PUBLISH room:channel:{room123} '{
-  "type": "state_update",
-  "source_player_id": 1, 
-  "patches": {
-    "player_1_position": {"x": 120, "y": 250}
-  },
-  "timestamp": 1640995300
-}'
-
-# 发布玩家加入消息
-PUBLISH room:channel:{room123} '{
-  "type": "player_joined",
-  "player_info": {
-    "playerId": 4,
-    "nickname": "NewPlayer",
-    "joined_at": 1640995400
-  },
-  "room_info": {
-    "player_count": 4,
-    "status": "waiting"
-  }
-}'
-
-# 发布玩家离开消息
-PUBLISH room:channel:{room123} '{
-  "type": "player_left", 
-  "player_id": 2,
-  "room_info": {
-    "player_count": 3,
-    "status": "waiting"
-  }
-}'
-
-# 订阅房间消息 (网关服务器操作)
-SUBSCRIBE room:channel:{room123}
-```
-
-**设计要点:**
-- **隐私保护**: 消息中使用playerId，不暴露openid
-- **轻量消息**: 使用4字节数字ID，减少消息大小
-- **实时广播**: 利用Redis Pub/Sub实现毫秒级消息分发
-- **多实例同步**: 支持多网关服务器实例间的消息同步
-- **消息结构化**: 统一消息格式，包含类型、来源、时间戳等元信息
-
----
-
-## 房间索引系统
-
-为了支持高效的房间查询、过滤和排序，设计了完整的索引体系：
-
-### 1. 房间基本信息索引
-
-```redis
-# 数据结构: HASH
-# Key: room:info:{roomId}
-# 用途: 房间列表查询的快速索引
-
-HSET room:info:{room123}
-  "name" "Epic Battle Arena"
-  "status" "waiting"
-  "visibility" "public"
-  "player_count" "2"
-  "max_players" "4"
-  "game_mode" "battle"
-  "owner_id" "alice"
-  "created_at" "1640995200"
-  "last_activity_at" "1640995800"
-  "region" "us-west"
-  "ping" "45"
-```
-
-**设计理念:**
-- 专门为房间列表查询优化
-- 包含UI显示所需的所有信息
-- 避免每次查询都读取完整元数据
-- 支持批量获取多个房间信息
-
-### 2. 状态分类索引
-
-```redis
-# 数据结构: ZSET (Sorted Set)
-# Score: timestamp (用于排序)
-# Member: roomId
-
-# 等待中的房间 (按创建时间排序)
-ZADD rooms:status:waiting 1640995200 "room123"
-ZADD rooms:status:waiting 1640995250 "room124"
-ZADD rooms:status:waiting 1640995300 "room125"
-
-# 游戏中的房间 (按开始时间排序)  
-ZADD rooms:status:playing 1640995400 "room126"
-ZADD rooms:status:playing 1640995450 "room127"
-
-# 已结束的房间 (按结束时间排序)
-ZADD rooms:status:finished 1640995600 "room128"
-```
-
-**查询示例:**
-```redis
-# 获取最新的10个等待中的房间
-ZREVRANGE rooms:status:waiting 0 9 WITHSCORES
-
-# 获取特定时间范围的房间
-ZRANGEBYSCORE rooms:status:waiting 1640995200 1640995400
-
-# 获取房间总数
-ZCARD rooms:status:waiting
-```
-
-### 3. 可见性分类索引
-
-```redis
-# 公开且等待中的房间
-ZADD rooms:public:waiting 1640995200 "room123"
-ZADD rooms:public:waiting 1640995250 "room124"
-
-# 公开且游戏中的房间
-ZADD rooms:public:playing 1640995400 "room126"
-
-# 私有房间集合 (不需要排序)
-SADD rooms:private "room129" "room130" "room131"
-```
-
-### 4. 游戏模式分类索引
-
-```redis
-# 按游戏模式分类的等待中房间
-ZADD rooms:gamemode:battle:waiting 1640995200 "room123"
-ZADD rooms:gamemode:battle:waiting 1640995250 "room124"
-
-ZADD rooms:gamemode:racing:waiting 1640995300 "room125"
-ZADD rooms:gamemode:racing:waiting 1640995350 "room126"
-
-# 按游戏模式分类的游戏中房间
-ZADD rooms:gamemode:battle:playing 1640995400 "room127"
-ZADD rooms:gamemode:racing:playing 1640995450 "room128"
-```
-
-### 5. 全局索引
-
-```redis
-# 所有活跃房间 (按最后活动时间排序)
-ZADD rooms:all 1640995800 "room123"
-ZADD rooms:all 1640995850 "room124"
-ZADD rooms:all 1640995900 "room125"
-
-# 按创建者分类
-SADD rooms:by_owner:alice "room123" "room129"
-SADD rooms:by_owner:bob "room124" "room130"
-
-# 按地理区域分类
-ZADD rooms:region:us-west 1640995200 "room123"
-ZADD rooms:region:us-east 1640995250 "room124"
-ZADD rooms:region:eu-west 1640995300 "room125"
-```
-
-### 6. 复合查询支持
-
-```redis
-# 使用Lua脚本进行复合查询
-local script = [[
-  local status_filter = ARGV[1]
-  local gamemode_filter = ARGV[2]
-  local page = tonumber(ARGV[3])
-  local page_size = tonumber(ARGV[4])
-  
-  -- 构建查询key
-  local query_key = "rooms:gamemode:" .. gamemode_filter .. ":" .. status_filter
-  
-  -- 分页查询
-  local start_idx = (page - 1) * page_size
-  local end_idx = start_idx + page_size - 1
-  
-  -- 获取房间ID列表
-  local room_ids = redis.call('ZREVRANGE', query_key, start_idx, end_idx)
-  
-  -- 批量获取房间信息
-  local room_infos = {}
-  for i, room_id in ipairs(room_ids) do
-    local info_key = "room:info:{" .. room_id .. "}"
-    local room_info = redis.call('HGETALL', info_key)
-    table.insert(room_infos, room_info)
-  end
-  
-  return room_infos
-]]
-
-# 执行复合查询
-EVAL script 0 "waiting" "battle" "1" "10"
-```
-
----
-
-## 数据一致性策略
-
-### 1. 事务性更新
-
-使用Redis事务确保相关数据的原子性更新：
-
-```redis
-# 房间状态变更的原子操作
-MULTI
-  # 更新房间状态
-  HSET room:metadata:{room123} "status" "playing"
-  HSET room:info:{room123} "status" "playing"
-  
-  # 更新索引
-  ZREM rooms:status:waiting "room123"
-  ZREM rooms:public:waiting "room123"
-  ZADD rooms:status:playing 1640995400 "room123"
-  ZADD rooms:public:playing 1640995400 "room123"
-  
-  # 更新活跃时间
-  ZADD rooms:all 1640995400 "room123"
-EXEC
-```
-
-### 2. Lua脚本保证一致性
-
-对于复杂的多步操作，使用Lua脚本确保原子性：
-
-```lua
--- 玩家加入房间的原子操作 (支持playerId分配)
-local join_room_script = [[
-  local room_id = ARGV[1]
-  local openid = ARGV[2]
-  local max_players = tonumber(ARGV[3])
-  
-  -- 检查房间是否存在
-  local room_exists = redis.call('EXISTS', 'room:metadata:{' .. room_id .. '}')
-  if room_exists == 0 then
-    return {err = 'ROOM_NOT_FOUND'}
-  end
-  
-  -- 检查玩家是否已在房间中
-  local existing_player_id = redis.call('HGET', 'room:openid_mapping:{' .. room_id .. '}', openid)
-  if existing_player_id then
-    return {ok = 'ALREADY_IN_ROOM', player_id = tonumber(existing_player_id)}
-  end
-  
-  -- 检查房间是否已满
-  local current_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
-  if current_count >= max_players then
-    return {err = 'ROOM_FULL'}
-  end
-  
-  -- 分配新的playerId
-  local player_id = redis.call('INCR', 'room:player_counter:{' .. room_id .. '}')
-  
-  -- 建立双向映射
-  redis.call('HSET', 'room:openid_mapping:{' .. room_id .. '}', openid, player_id)
-  redis.call('HSET', 'room:player_mapping:{' .. room_id .. '}', player_id, openid)
-  
-  -- 添加到成员列表
-  redis.call('SADD', 'room:members:{' .. room_id .. '}', player_id)
-  
-  -- 记录加入时间
-  local timestamp = redis.call('TIME')[1]
-  redis.call('HSET', 'room:join_time:{' .. room_id .. '}', player_id, timestamp)
-  
-  -- 更新房间信息
-  local new_count = current_count + 1
-  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', new_count)
-  redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', new_count)
-  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'last_activity_at', timestamp)
-  redis.call('ZADD', 'rooms:all', timestamp, room_id)
-  
-  return {ok = 'SUCCESS', player_id = player_id, player_count = new_count}
-]]
-
--- 玩家离开房间的原子操作
-local leave_room_script = [[
-  local room_id = ARGV[1]
-  local player_id = tonumber(ARGV[2])
-  
-  -- 检查玩家是否在房间中
-  local is_member = redis.call('SISMEMBER', 'room:members:{' .. room_id .. '}', player_id)
-  if is_member == 0 then
-    return {err = 'PLAYER_NOT_IN_ROOM'}
-  end
-  
-  -- 获取OpenID用于清理映射
-  local openid = redis.call('HGET', 'room:player_mapping:{' .. room_id .. '}', player_id)
-  
-  -- 清理映射关系
-  redis.call('HDEL', 'room:openid_mapping:{' .. room_id .. '}', openid)
-  redis.call('HDEL', 'room:player_mapping:{' .. room_id .. '}', player_id)
-  redis.call('SREM', 'room:members:{' .. room_id .. '}', player_id)
-  
-  -- 记录离开时间
-  local timestamp = redis.call('TIME')[1]
-  redis.call('HSET', 'room:leave_time:{' .. room_id .. '}', player_id, timestamp)
-  
-  -- 更新房间信息
-  local new_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
-  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', new_count)
-  redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', new_count)
-  redis.call('HSET', 'room:info:{' .. room_id .. '}', 'last_activity_at', timestamp)
-  redis.call('ZADD', 'rooms:all', timestamp, room_id)
-  
-  return {ok = 'SUCCESS', player_count = new_count}
-]]
-```
-
-### 3. 数据修复机制
-
-定期执行数据一致性检查和修复：
-
-```redis
-# 数据修复脚本示例
-local repair_script = [[
-  -- 修复房间计数不一致问题
-  local room_ids = redis.call('ZRANGE', 'rooms:all', 0, -1)
-  
-  for i, room_id in ipairs(room_ids) do
-    -- 重新计算房间人数
-    local actual_count = redis.call('SCARD', 'room:members:{' .. room_id .. '}')
-    
-    -- 更新信息中的人数
-    redis.call('HSET', 'room:info:{' .. room_id .. '}', 'player_count', actual_count)
-    redis.call('HSET', 'room:metadata:{' .. room_id .. '}', 'player_count', actual_count)
-  end
-  
-  return 'REPAIR_COMPLETED'
-]]
-```
-
-### 4. 冲突解决策略
-
-**乐观锁机制:**
-```redis
-# 使用版本号避免并发冲突
-WATCH room:metadata:{room123}
-
-# 检查版本号
-version = HGET room:metadata:{room123} "version"
-if version != expected_version:
-    UNWATCH
-    return "CONFLICT"
-
-# 执行更新
-MULTI
-  HSET room:metadata:{room123} "status" "playing"
-  HINCRBY room:metadata:{room123} "version" 1
-EXEC
-```
-
-**最后写入获胜 (Last Write Wins):**
-```redis
-# 对于状态更新，总是接受最新的写入
-HSET room:state:{room123} "player_alice_position" '{"x":120,"y":250,"timestamp":1640995400}'
-```
-
----
-
 ## 性能优化
 
 ### 1. 内存使用优化
@@ -643,31 +377,31 @@ CONFIG SET zset-max-ziplist-value 64
 # 为临时数据设置TTL
 SETEX player:session:alice 3600 "room123"  # 1小时过期
 
-# 为已结束的房间设置过期时间
-EXPIRE room:state:{room123} 86400  # 24小时后清理
-EXPIRE room:metadata:{room123} 86400
-EXPIRE room:members:{room123} 86400
+# 为已结束的房间设置过期时间（应用隔离）
+EXPIRE app:game123:room:state:{game123:room456} 86400  # 24小时后清理
+EXPIRE app:game123:room:metadata:{game123:room456} 86400
+EXPIRE app:game123:room:members:{game123:room456} 86400
 ```
 
 ### 2. 读写性能优化
 
 #### 批量操作
 ```redis
-# 使用Pipeline批量获取房间信息
+# 使用Pipeline批量获取房间信息（应用隔离 + 联合哈希标签）
 PIPELINE
-  HGETALL room:info:{room123}
-  HGETALL room:info:{room124}  
-  HGETALL room:info:{room125}
+  HGETALL app:game123:room:info:{game123:room456}
+  HGETALL app:game123:room:info:{game123:room457}  
+  HGETALL app:game123:room:info:{game123:room458}
 EXEC
 ```
 
 #### 读写分离
 ```redis
-# 写操作发送到主节点
-redis_master.hset("room:state:{room123}", "score", "100")
+# 写操作发送到主节点（应用隔离 + 联合哈希标签）
+redis_master.hset("app:game123:room:state:{game123:room456}", "score", "100")
 
 # 读操作从从节点读取
-redis_slave.hget("room:state:{room123}", "score")
+redis_slave.hget("app:game123:room:state:{game123:room456}", "score")
 ```
 
 ### 3. 网络优化
@@ -696,11 +430,11 @@ const redis = new Redis.Cluster([
 
 #### 请求合并
 ```typescript
-// 将多个小请求合并为批量操作
+// 将多个小请求合并为批量操作（应用隔离 + 联合哈希标签）
 const pipeline = redis.pipeline();
-pipeline.hget('room:info:{room123}', 'name');
-pipeline.hget('room:info:{room123}', 'status');
-pipeline.scard('room:members:{room123}');
+pipeline.hget('app:game123:room:info:{game123:room456}', 'name');
+pipeline.hget('app:game123:room:info:{game123:room456}', 'status');
+pipeline.scard('app:game123:room:members:{game123:room456}');
 const results = await pipeline.exec();
 ```
 
@@ -713,13 +447,15 @@ class RoomInfoCache {
   private cache = new Map<string, RoomInfo>();
   private ttl = 60000; // 1分钟TTL
   
+  constructor(private appId: string) {}
+  
   async getRoomInfo(roomId: string): Promise<RoomInfo> {
     const cached = this.cache.get(roomId);
     if (cached && Date.now() - cached.timestamp < this.ttl) {
       return cached.data;
     }
     
-    const data = await redis.hgetall(`room:info:{${roomId}}`);
+    const data = await redis.hgetall(`app:${this.appId}:room:info:{${this.appId}:${roomId}}`);
     this.cache.set(roomId, { data, timestamp: Date.now() });
     return data;
   }
@@ -752,27 +488,6 @@ redis-cli info clients
 
 # 操作统计
 redis-cli info stats
-```
-
-#### 业务指标
-```redis
-# 房间数量统计
-SCRIPT LOAD "
-  local total_rooms = redis.call('ZCARD', 'rooms:all')
-  local waiting_rooms = redis.call('ZCARD', 'rooms:status:waiting') 
-  local playing_rooms = redis.call('ZCARD', 'rooms:status:playing')
-  return {total_rooms, waiting_rooms, playing_rooms}
-"
-
-# 在线玩家统计
-SCRIPT LOAD "
-  local total_players = 0
-  local room_ids = redis.call('ZRANGE', 'rooms:all', 0, -1)
-  for i, room_id in ipairs(room_ids) do
-    total_players = total_players + redis.call('SCARD', 'room:members:' .. room_id)
-  end
-  return total_players
-"
 ```
 
 ### 2. 数据备份策略
@@ -846,250 +561,6 @@ const redis = new Redis.Cluster([
   retryDelayOnFailover: 100,
   enableOfflineQueue: false
 });
-
-// 直接使用，Redis Cluster自动处理分片
-class RoomManager {
-  async createRoom(roomId: string, roomData: any) {
-    // 自动路由到正确的节点，无需手动分片逻辑
-    await redis.hset(`room:state:${roomId}`, roomData);
-    await redis.zadd('rooms:all', Date.now(), roomId);
-  }
-  
-  async getRoomState(roomId: string) {
-    // Redis根据key的hash slot自动路由
-    return await redis.hgetall(`room:state:${roomId}`);
-  }
-}
-```
-
-#### 集群扩容
-
-Redis Cluster 支持动态扩容：
-
-```bash
-# 添加新节点到集群
-redis-cli --cluster add-node new-node-ip:6379 existing-node-ip:6379
-
-# 重新分片，迁移部分hash slot到新节点
-redis-cli --cluster reshard existing-node-ip:6379 \
-  --cluster-from source-node-id \
-  --cluster-to target-node-id \
-  --cluster-slots 1000
-
-# 检查集群状态
-redis-cli --cluster check existing-node-ip:6379
-```
-
-**扩容优势:**
-- **零停机**: 扩容过程中服务不中断
-- **自动迁移**: Redis自动迁移数据到新节点
-- **负载均衡**: 自动重新分布hash slot
-
-### 2. 读写分离扩展
-
-```typescript
-// 主从读写分离
-class RedisCluster {
-  private masterNodes: Redis[];
-  private slaveNodes: Redis[];
-  
-  async write(key: string, value: string): Promise<void> {
-    const master = this.getMasterForKey(key);
-    await master.set(key, value);
-  }
-  
-  async read(key: string): Promise<string> {
-    const slave = this.getSlaveForKey(key);
-    return await slave.get(key);
-  }
-}
-```
-
-### 3. 数据分层存储
-
-```typescript
-// 热温冷数据分层
-class TieredStorage {
-  private hotRedis: Redis;      // 热数据: 当前活跃房间
-  private warmRedis: Redis;     // 温数据: 近期房间
-  private coldStorage: Database; // 冷数据: 历史房间
-  
-  async getRoomData(roomId: string): Promise<RoomData> {
-    // 先从热数据查找
-    let data = await this.hotRedis.hgetall(`room:state:${roomId}`);
-    if (data) return data;
-    
-    // 再从温数据查找
-    data = await this.warmRedis.hgetall(`room:state:${roomId}`);
-    if (data) {
-      // 提升到热数据
-      await this.hotRedis.hset(`room:state:${roomId}`, data);
-      return data;
-    }
-    
-    // 最后从冷存储查找
-    return await this.coldStorage.getRoomData(roomId);
-  }
-}
-```
-
-### 4. 多地域部署
-
-```typescript
-// 多地域Redis集群
-class MultiRegionRedis {
-  private regions: Map<string, Redis>;
-  
-  constructor() {
-    this.regions.set('us-west', new Redis({host: 'redis-us-west.example.com'}));
-    this.regions.set('us-east', new Redis({host: 'redis-us-east.example.com'}));
-    this.regions.set('eu-west', new Redis({host: 'redis-eu-west.example.com'}));
-  }
-  
-  getRegionalRedis(region: string): Redis {
-    return this.regions.get(region) || this.regions.get('us-west');
-  }
-  
-  // 跨地域数据同步
-  async syncToAllRegions(key: string, value: string): Promise<void> {
-    const promises = Array.from(this.regions.values()).map(redis => 
-      redis.set(key, value)
-    );
-    await Promise.all(promises);
-  }
-}
-```
-
-### 5. 未来应用层分片考虑
-
-> **注意**: 当前使用 Redis Cluster 自动分片已足够。以下场景仅在超大规模或特殊需求下考虑应用层分片。
-
-#### 可能需要手动分片的场景
-
-**1. 地理分片 (Multi-Region)**
-- **触发条件**: 全球用户 > 100万，跨大洲延迟 > 100ms
-- **策略**: 按地理位置将房间分布到就近的Redis集群
-- **实现**: 
-  ```typescript
-  class GeoSharding {
-    getClusterForUser(userLocation: string): string {
-      if (userLocation.startsWith('US')) return 'us-cluster';
-      if (userLocation.startsWith('EU')) return 'eu-cluster';
-      if (userLocation.startsWith('AS')) return 'asia-cluster';
-      return 'global-cluster';
-    }
-  }
-  ```
-
-**2. 业务垂直分片**
-- **触发条件**: 不同游戏模式负载特征差异巨大
-- **策略**: 按游戏类型分配到专用Redis集群
-- **示例**: 
-  - 实时竞技游戏 → 高性能SSD集群 
-  - 回合制游戏 → 普通性能集群
-  - 大型MMO → 专用集群
-
-**3. 热点数据分离**
-- **触发条件**: 个别房间QPS > 10000 或连接数 > 1000
-- **策略**: 热点房间迁移到专用高性能集群
-- **动态检测**: 基于访问频率自动识别热点
-
-#### 预留的分片扩展接口
-
-```typescript
-// 分片策略接口
-interface ShardingStrategy {
-  getClusterForRoom(roomId: string, metadata?: any): string;
-  getClusterForUser(userId: string, userInfo?: any): string;
-  getClusterForQuery(queryType: string, filters: any): string[];
-}
-
-// 默认实现 - 单集群 (当前)
-class DefaultSharding implements ShardingStrategy {
-  getClusterForRoom(): string { return 'main'; }
-  getClusterForUser(): string { return 'main'; }
-  getClusterForQuery(): string[] { return ['main']; }
-}
-
-// 地理分片实现 (未来)
-class GeoSharding implements ShardingStrategy {
-  getClusterForRoom(roomId: string, metadata: any): string {
-    return metadata?.region || 'us-west';
-  }
-  
-  getClusterForUser(userId: string, userInfo: any): string {
-    return this.getRegionByLocation(userInfo?.location);
-  }
-  
-  getClusterForQuery(queryType: string, filters: any): string[] {
-    if (filters?.region) return [filters.region];
-    return ['us-west', 'us-east', 'eu-west', 'asia-east']; // 需要聚合查询
-  }
-}
-
-// 可插拔的分片管理器
-class ShardedRoomManager {
-  constructor(
-    private sharding: ShardingStrategy = new DefaultSharding(),
-    private clusters: Map<string, Redis> = new Map([['main', redis]])
-  ) {}
-  
-  async createRoom(roomId: string, roomData: any) {
-    const clusterName = this.sharding.getClusterForRoom(roomId, roomData);
-    const redis = this.clusters.get(clusterName);
-    if (!redis) throw new Error(`Cluster ${clusterName} not found`);
-    
-    await redis.hset(`room:state:${roomId}`, roomData);
-    await redis.zadd('rooms:all', Date.now(), roomId);
-  }
-  
-  async getRoomList(filters: any): Promise<RoomInfo[]> {
-    const clusterNames = this.sharding.getClusterForQuery('room_list', filters);
-    const promises = clusterNames.map(async (clusterName) => {
-      const redis = this.clusters.get(clusterName);
-      return await this.queryRoomListFromCluster(redis, filters);
-    });
-    
-    const results = await Promise.all(promises);
-    return this.mergeAndSortResults(results.flat(), filters.sort);
-  }
-}
-```
-
-#### 分片迁移策略
-
-```typescript
-// 热点检测和迁移
-class HotspotDetector {
-  async detectAndMigrate(): Promise<void> {
-    const hotRooms = await this.detectHotRooms();
-    
-    for (const roomId of hotRooms) {
-      await this.migrateRoomToHotCluster(roomId);
-    }
-  }
-  
-  private async detectHotRooms(): Promise<string[]> {
-    // 基于访问频率、连接数等指标检测热点
-    const roomStats = await redis.eval(`
-      local hot_rooms = {}
-      local room_ids = redis.call('ZRANGE', 'rooms:all', 0, -1)
-      
-      for i, room_id in ipairs(room_ids) do
-        local qps = redis.call('HGET', 'room:stats:' .. room_id, 'qps') or 0
-        local connections = redis.call('SCARD', 'room:members:' .. room_id) or 0
-        
-        if tonumber(qps) > 1000 or tonumber(connections) > 100 then
-          table.insert(hot_rooms, room_id)
-        end
-      end
-      
-      return hot_rooms
-    `);
-    
-    return roomStats as string[];
-  }
-}
 ```
 
 ---
@@ -1097,8 +568,8 @@ class HotspotDetector {
 ## 最佳实践总结
 
 ### 1. 命名规范
-- 使用冒号分隔的层次化命名: `room:state:{roomId}`
-- 统一的前缀: `room:`, `player:`, `game:`
+- 使用冒号分隔的层次化命名: `app:{appId}:service:type:{hashTag}`
+- 统一的前缀: `app:{appId}:` 进行应用隔离
 - 避免过长的key名称影响内存使用
 
 ### 2. 数据结构选择
@@ -1119,4 +590,33 @@ class HotspotDetector {
 - 平均延迟 > 10ms
 - 主从同步延迟 > 1秒
 
-通过这套完整的Redis数据结构设计，RealSync能够支持大规模的实时多人游戏场景，提供低延迟、高可用的数据服务。 
+---
+
+## 🚀 快速导航
+
+### 新手入门
+1. 📖 先阅读本文档了解基础概念和架构设计
+2. 🎮 根据需求选择 [游戏局设计](./redis-game-session.md) 或 [房间服务设计](./redis-room-service.md)
+
+### 开发者指南
+- **实现游戏内同步** → [游戏局 Redis 设计](./redis-game-session.md)
+- **构建游戏大厅** → [房间服务 Redis 设计](./redis-room-service.md)
+- **系统架构设计** → 本文档的架构概览部分
+
+### 运维人员
+- **性能监控** → 本文档的 [运维与监控](#运维与监控) 部分
+- **扩展规划** → 本文档的 [扩展性考虑](#扩展性考虑) 部分
+- **故障排查** → 各子文档的监控指标部分
+
+---
+
+## 🔗 相关文档
+
+- **[架构设计](./architecture.md)** - RealSync 整体架构
+- **[协议设计](./protocol-design.md)** - 通信协议规范
+
+---
+
+> **💡 提示**: 本设计支持大规模多租户部署，单个Redis集群可服务数千个游戏应用，每个应用的数据完全隔离且性能优化。
+
+通过这套完整的Redis设计框架，RealSync能够支持大规模的实时多人游戏场景，提供低延迟、高可用的数据服务。
