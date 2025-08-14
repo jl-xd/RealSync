@@ -1,0 +1,20 @@
+{
+  "name": "@realsync/protocol",
+  "version": "1.0.0",
+  "description": "RealSync Protocol Buffers definitions",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run protoc && npm run compile",
+    "protoc": "protoc --proto_path=src --ts_out=dist --ts_opt=generate_dependencies src/*.proto",
+    "compile": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@protobuf-ts/runtime": "^2.9.0"
+  },
+  "devDependencies": {
+    "@protobuf-ts/plugin": "^2.9.0",
+    "typescript": "^5.0.0"
+  }
+}

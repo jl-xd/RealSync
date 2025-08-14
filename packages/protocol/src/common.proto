@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package realsync.common;
+
+// 通用值类型 - 支持所有游戏数据
+message Value {
+    oneof value {
+        string string_value = 1;      // 字符串: 玩家名称、游戏状态等
+        double number_value = 2;      // 数字: 分数、位置坐标、血量等
+        bool bool_value = 3;          // 布尔: 游戏设置、玩家状态等
+        ArrayValue array_value = 4;   // 数组: 玩家列表、物品清单等
+        ObjectValue object_value = 5; // 对象: 复杂配置、嵌套数据等
+    }
+}
+
+// 数组值 - 支持任意类型元素
+message ArrayValue {
+    repeated Value items = 1;
+}
+
+// 对象值 - 支持嵌套结构
+message ObjectValue {
+    map<string, Value> fields = 1;
+}
+
+// 状态更新差异
+message StatePatch {
+    string path = 1;           // 更新路径，如 "player.1.health"
+    Value value = 2;           // 新值
+    PatchOperation op = 3;     // 操作类型
+}
+
+// 状态操作类型
+enum PatchOperation {
+    SET = 0;     // 设置值
+    DELETE = 1;  // 删除键
+    INCREMENT = 2; // 数值增加
+    APPEND = 3;  // 数组追加
+}
+
+// 错误信息
+message Error {
+    string code = 1;       // 错误代码
+    string message = 2;    // 错误描述
+    map<string, string> details = 3; // 错误详情
+}
+
+// 房间可见性
+enum RoomVisibility {
+    PRIVATE = 0;  // 私有房间
+    PUBLIC = 1;   // 公共房间
+}
+
+// 房间状态
+enum RoomStatus {
+    WAITING = 0;  // 等待玩家
+    PLAYING = 1;  // 游戏中
+    ENDED = 2;    // 已结束
+}
+
+// 玩家信息
+message Player {
+    int32 player_id = 1;        // 房间内ID (1, 2, 3...)
+    string open_id = 2;         // 全局用户ID (仅服务端可见)
+    string display_name = 3;    // 显示名称
+    bool is_host = 4;          // 是否为房主
+    int64 joined_at = 5;       // 加入时间戳
+    map<string, Value> metadata = 6; // 自定义玩家数据
+}
+
+// 房间元数据
+message RoomMetadata {
+    string room_id = 1;
+    string name = 2;
+    string game_mode = 3;
+    int32 max_players = 4;
+    int32 current_players = 5;
+    RoomVisibility visibility = 6;
+    RoomStatus status = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
+    map<string, Value> custom_data = 10;
+}
