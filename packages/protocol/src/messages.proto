@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package realsync.messages;
+
+import "common.proto";
+
+// 客户端到服务器的消息
+message ClientMessage {
+    string request_id = 1;  // 请求ID，用于响应匹配
+    oneof payload {
+        // 认证
+        AuthRequest auth_request = 10;
+        
+        // 房间管理
+        CreateRoomRequest create_room_request = 20;
+        JoinRoomRequest join_room_request = 21;
+        LeaveRoomRequest leave_room_request = 22;
+        ListRoomsRequest list_rooms_request = 23;
+        
+        // 状态同步
+        StateUpdateRequest state_update_request = 30;
+        GetStateRequest get_state_request = 31;
+        
+        // 心跳
+        PingRequest ping_request = 40;
+    }
+}
+
+// 服务器到客户端的消息
+message ServerMessage {
+    string request_id = 1;  // 对应的请求ID（响应消息）
+    oneof payload {
+        // 认证响应
+        AuthResponse auth_response = 10;
+        
+        // 房间管理响应
+        CreateRoomResponse create_room_response = 20;
+        JoinRoomResponse join_room_response = 21;
+        LeaveRoomResponse leave_room_response = 22;
+        ListRoomsResponse list_rooms_response = 23;
+        
+        // 状态同步响应
+        StateUpdateResponse state_update_response = 30;
+        GetStateResponse get_state_response = 31;
+        
+        // 事件推送
+        StateChangeEvent state_change_event = 50;
+        PlayerJoinedEvent player_joined_event = 51;
+        PlayerLeftEvent player_left_event = 52;
+        RoomUpdatedEvent room_updated_event = 53;
+        
+        // 错误和心跳
+        ErrorResponse error_response = 90;
+        PongResponse pong_response = 91;
+    }
+}
+
+// === 认证相关 ===
+message AuthRequest {
+    string api_key = 1;
+    string user_token = 2;  // JWT token with openId
+}
+
+message AuthResponse {
+    bool success = 1;
+    string session_id = 2;
+    string error_message = 3;
+}
+
+// === 房间管理相关 ===
+message CreateRoomRequest {
+    string name = 1;
+    string game_mode = 2;
+    int32 max_players = 3;
+    realsync.common.RoomVisibility visibility = 4;
+    map<string, realsync.common.Value> custom_data = 5;
+}
+
+message CreateRoomResponse {
+    bool success = 1;
+    realsync.common.RoomMetadata room = 2;
+    realsync.common.Player player = 3;  // 创建者信息
+    realsync.common.Error error = 4;
+}
+
+message JoinRoomRequest {
+    string room_id = 1;
+    string display_name = 2;
+    map<string, realsync.common.Value> player_metadata = 3;
+}
+
+message JoinRoomResponse {
+    bool success = 1;
+    realsync.common.RoomMetadata room = 2;
+    realsync.common.Player player = 3;  // 加入者信息
+    repeated realsync.common.Player all_players = 4;  // 房间内所有玩家
+    map<string, realsync.common.Value> current_state = 5;  // 当前房间状态
+    realsync.common.Error error = 6;
+}
+
+message LeaveRoomRequest {
+    string room_id = 1;
+}
+
+message LeaveRoomResponse {
+    bool success = 1;
+    realsync.common.Error error = 2;
+}
+
+message ListRoomsRequest {
+    string game_mode = 1;  // 可选：按游戏模式筛选
+    realsync.common.RoomVisibility visibility = 2;  // 可选：按可见性筛选
+    int32 limit = 3;       // 可选：限制返回数量
+}
+
+message ListRoomsResponse {
+    repeated realsync.common.RoomMetadata rooms = 1;
+    realsync.common.Error error = 2;
+}
+
+// === 状态同步相关 ===
+message StateUpdateRequest {
+    string room_id = 1;
+    repeated realsync.common.StatePatch patches = 2;
+}
+
+message StateUpdateResponse {
+    bool success = 1;
+    repeated realsync.common.StatePatch applied_patches = 2;  // 实际应用的更新
+    realsync.common.Error error = 3;
+}
+
+message GetStateRequest {
+    string room_id = 1;
+    repeated string keys = 2;  // 可选：仅获取指定键
+}
+
+message GetStateResponse {
+    map<string, realsync.common.Value> state = 1;
+    realsync.common.Error error = 2;
+}
+
+// === 事件推送 ===
+message StateChangeEvent {
+    string room_id = 1;
+    int32 from_player_id = 2;  // 触发更新的玩家ID
+    repeated realsync.common.StatePatch patches = 3;
+    int64 timestamp = 4;
+}
+
+message PlayerJoinedEvent {
+    string room_id = 1;
+    realsync.common.Player player = 2;
+    int64 timestamp = 3;
+}
+
+message PlayerLeftEvent {
+    string room_id = 1;
+    int32 player_id = 2;
+    int64 timestamp = 3;
+}
+
+message RoomUpdatedEvent {
+    string room_id = 1;
+    realsync.common.RoomMetadata room = 2;
+    int64 timestamp = 3;
+}
+
+// === 其他 ===
+message ErrorResponse {
+    realsync.common.Error error = 1;
+}
+
+message PingRequest {
+    int64 timestamp = 1;
+}
+
+message PongResponse {
+    int64 timestamp = 1;
+    int64 server_time = 2;
+}
